@@ -1,0 +1,235 @@
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass
+from pathlib import Path
+
+from .schemas.catalog import (
+    Course,
+    CourseSkillMapping,
+    CuratedRoleSkillCourse,
+    FusionRoleProfile,
+    RoleMarket,
+    RoleSkillEvidence,
+    SkillMarket,
+    SourceReference,
+)
+
+
+class DataValidationError(RuntimeError):
+    pass
+
+
+@dataclass(slots=True)
+class CatalogStore:
+    courses: list[Course]
+    course_skills: list[CourseSkillMapping]
+    curated_role_skill_courses: list[CuratedRoleSkillCourse]
+    fusion_role_profiles: list[FusionRoleProfile]
+    roles: list[RoleMarket]
+    roles_source_file: str
+    skills: list[SkillMarket]
+    evidence_links: list[RoleSkillEvidence]
+    sources: list[SourceReference]
+    warnings: list[str]
+
+    @property
+    def roles_by_id(self) -> dict[str, RoleMarket]:
+        return {r.role_id: r for r in self.roles}
+
+    @property
+    def courses_by_id(self) -> dict[str, Course]:
+        return {c.course_id: c for c in self.courses}
+
+
+def _read_json(path: Path):
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _project_root() -> Path:
+    return Path(__file__).resolve().parents[2]
+
+
+def load_catalog_store(data_dir: Path | None = None) -> CatalogStore:
+    root = _project_root()
+    processed = data_dir or (root / "data" / "processed")
+
+    courses = [Course.model_validate(x) for x in _read_json(processed / "courses.json")]
+    course_skills = [
+        CourseSkillMapping.model_validate(x)
+        for x in _read_json(processed / "course_skills.json")
+    ]
+    curated_path = processed / "course_skills_curated.json"
+    curated_role_skill_courses = (
+        [CuratedRoleSkillCourse.model_validate(x) for x in _read_json(curated_path)]
+        if curated_path.exists()
+        else []
+    )
+    fusion_path = processed / "fusion_roles.json"
+    fusion_role_profiles = (
+        [FusionRoleProfile.model_validate(x) for x in _read_json(fusion_path)]
+        if fusion_path.exists()
+        else []
+    )
+    calibrated_roles_path = processed / "roles_market_calibrated.json"
+    default_roles_path = processed / "roles_market.json"
+    roles_path = calibrated_roles_path if calibrated_roles_path.exists() else default_roles_path
+    roles = [RoleMarket.model_validate(x) for x in _read_json(roles_path)]
+    skills = [SkillMarket.model_validate(x) for x in _read_json(processed / "skills_market.json")]
+    evidence_links = [
+        RoleSkillEvidence.model_validate(x)
+        for x in _read_json(processed / "role_skill_evidence.json")
+    ]
+    sources = [
+        SourceReference.model_validate(x) for x in _read_json(processed / "market_sources.json")
+    ]
+
+    _validate_cross_references(
+        courses,
+        course_skills,
+        curated_role_skill_courses,
+        fusion_role_profiles,
+        roles,
+        skills,
+        evidence_links,
+        sources,
+    )
+    warnings = _validate_course_prereqs(courses)
+    if curated_role_skill_courses:
+        warnings.append(
+            f"Curated role-skill-course mappings loaded: {len(curated_role_skill_courses)}."
+        )
+    if fusion_role_profiles:
+        warnings.append(
+            f"Fusion role profiles loaded: {len(fusion_role_profiles)}."
+        )
+
+    return CatalogStore(
+        courses=courses,
+        course_skills=course_skills,
+        curated_role_skill_courses=curated_role_skill_courses,
+        fusion_role_profiles=fusion_role_profiles,
+        roles=roles,
+        roles_source_file=roles_path.name,
+        skills=skills,
+        evidence_links=evidence_links,
+        sources=sources,
+        warnings=warnings,
+    )
+
+
+def _validate_cross_references(
+    courses: list[Course],
+    course_skills: list[CourseSkillMapping],
+    curated_role_skill_courses: list[CuratedRoleSkillCourse],
+    fusion_role_profiles: list[FusionRoleProfile],
+    roles: list[RoleMarket],
+    skills: list[SkillMarket],
+    evidence_links: list[RoleSkillEvidence],
+    sources: list[SourceReference],
+) -> None:
+    role_ids = {r.role_id for r in roles}
+    skill_ids = {s.skill_id for s in skills}
+    source_ids = {s.source_id for s in sources}
+    course_ids = {c.course_id for c in courses}
+    errors: list[str] = []
+
+    for mapping in course_skills:
+        if mapping.course_id not in course_ids:
+            errors.append(
+                f"Course-skill mapping references missing course '{mapping.course_id}'."
+            )
+        if mapping.skill_id not in skill_ids:
+            errors.append(
+                f"Course-skill mapping references missing skill '{mapping.skill_id}'."
+            )
+
+    for mapping in curated_role_skill_courses:
+        if mapping.role_id not in role_ids:
+            errors.append(
+                f"Curated mapping references missing role '{mapping.role_id}'."
+            )
+        if mapping.course_id not in course_ids:
+            errors.append(
+                f"Curated mapping references missing course '{mapping.course_id}'."
+            )
+        if mapping.skill_id not in skill_ids:
+            errors.append(
+                f"Curated mapping references missing skill '{mapping.skill_id}'."
+            )
+
+    for profile in fusion_role_profiles:
+        if profile.role_id not in role_ids:
+            errors.append(
+                f"Fusion profile references missing role '{profile.role_id}'."
+            )
+        for item in profile.domain_skills:
+            if item.skill_id not in skill_ids:
+                errors.append(
+                    f"Fusion profile '{profile.role_id}' domain skill missing: '{item.skill_id}'."
+                )
+        for item in profile.tech_skills:
+            if item.skill_id not in skill_ids:
+                errors.append(
+                    f"Fusion profile '{profile.role_id}' tech skill missing: '{item.skill_id}'."
+                )
+        for item in profile.unlock_skills:
+            if item.skill_id not in skill_ids:
+                errors.append(
+                    f"Fusion profile '{profile.role_id}' unlock skill missing: '{item.skill_id}'."
+                )
+        for source_id in profile.evidence_sources:
+            if source_id not in source_ids:
+                errors.append(
+                    f"Fusion profile '{profile.role_id}' references missing source '{source_id}'."
+                )
+
+    for role in roles:
+        for req in role.required_skills:
+            if req.skill_id not in skill_ids:
+                errors.append(
+                    f"Role '{role.role_id}' references missing skill '{req.skill_id}'."
+                )
+        for source_id in role.evidence_sources:
+            if source_id not in source_ids:
+                errors.append(
+                    f"Role '{role.role_id}' references missing source '{source_id}'."
+                )
+
+    for skill in skills:
+        for source_id in skill.source_refs:
+            if source_id not in source_ids:
+                errors.append(
+                    f"Skill '{skill.skill_id}' references missing source '{source_id}'."
+                )
+
+    for evidence in evidence_links:
+        if evidence.role_id not in role_ids:
+            errors.append(f"Evidence references missing role '{evidence.role_id}'.")
+        if evidence.skill_id not in skill_ids:
+            errors.append(f"Evidence references missing skill '{evidence.skill_id}'.")
+        for source_id in evidence.evidence_sources:
+            if source_id not in source_ids:
+                errors.append(
+                    f"Evidence ({evidence.role_id}/{evidence.skill_id}) missing source '{source_id}'."
+                )
+
+    if errors:
+        msg = "Market data integrity check failed:\n- " + "\n- ".join(errors)
+        raise DataValidationError(msg)
+
+
+def _validate_course_prereqs(courses: list[Course]) -> list[str]:
+    existing = {c.course_id for c in courses}
+    missing_refs = set()
+    for course in courses:
+        for prereq in course.prerequisites:
+            if prereq not in existing:
+                missing_refs.add((course.course_id, prereq))
+
+    warnings = []
+    if missing_refs:
+        warnings.append(
+            f"Global catalog-wide external prerequisite references: {len(missing_refs)}."
+        )
+    return warnings
