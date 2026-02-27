@@ -1,12 +1,28 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
 ProgramLevel = Literal["UG", "GR"]
 PlanMode = Literal["CORE", "FUSION"]
 Term = Literal["Fall", "Spring", "Summer", "Winter"]
+PlanErrorCode = Literal[
+    "COURSE_NOT_FOUND",
+    "PREREQ_ORDER",
+    "CREDIT_OVER_MAX",
+    "CREDITS_BELOW_MIN",
+    "LEVEL_MISMATCH",
+    "OFFERING_MISMATCH",
+    "DUPLICATE_COURSE",
+    "ANTIREQ_CONFLICT",
+    "COREQ_NOT_SATISFIED",
+    "SKILL_GAP",
+    "PREREQ_EXTERNAL_REF",
+    "PREREQ_COMPLEX_UNSUPPORTED",
+    "EVIDENCE_INTEGRITY_VIOLATION",
+    "ROLE_REQUEST_UNRESOLVED",
+]
 
 
 class StudentProfile(BaseModel):
@@ -26,6 +42,7 @@ class StudentProfile(BaseModel):
 class PlanRequest(BaseModel):
     student_profile: StudentProfile
     preferred_role_id: str | None = None
+    requested_role_text: str | None = None
 
 
 class SkillCoverage(BaseModel):
@@ -43,6 +60,7 @@ class PlanSemester(BaseModel):
 
 
 class EvidencePanelItem(BaseModel):
+    evidence_id: str
     role_id: str
     skill_id: str
     skill_name: str
@@ -51,6 +69,8 @@ class EvidencePanelItem(BaseModel):
     source_title: str
     source_url: str
     snippet: str
+    retrieval_method: Literal["vector", "lexical", "hybrid"]
+    rank_score: float | None = None
     confidence: float | None = Field(default=None, ge=0.0, le=1.0)
 
 
@@ -60,6 +80,13 @@ class CoursePurposeCard(BaseModel):
     why_this_course: str
     satisfied_skills: list[str] = Field(default_factory=list)
     evidence: list[EvidencePanelItem] = Field(default_factory=list)
+
+
+class CandidateRole(BaseModel):
+    role_id: str
+    role_title: str
+    score: float
+    reasons: list[str] = Field(default_factory=list)
 
 
 class FusionReadiness(BaseModel):
@@ -85,14 +112,29 @@ class FusionSummary(BaseModel):
     readiness: FusionReadiness
 
 
+class PlanError(BaseModel):
+    code: PlanErrorCode
+    message: str
+    course_id: str | None = None
+    prereq_id: str | None = None
+    term: Term | None = None
+    details: dict[str, Any] = Field(default_factory=dict)
+
+
 class PlanResponse(BaseModel):
+    request_id: str = ""
+    plan_id: str = ""
+    cache_status: Literal["hit", "miss"] = "miss"
+    data_version: str = ""
     selected_role_id: str
     selected_role_title: str
     skill_coverage: list[SkillCoverage] = Field(default_factory=list)
     semesters: list[PlanSemester] = Field(default_factory=list)
-    validation_errors: list[str] = Field(default_factory=list)
+    validation_errors: list[PlanError] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
+    candidate_roles: list[CandidateRole] = Field(default_factory=list)
     evidence_panel: list[EvidencePanelItem] = Field(default_factory=list)
     course_purpose_cards: list[CoursePurposeCard] = Field(default_factory=list)
     fusion_summary: FusionSummary | None = None
     agent_trace: list[str] = Field(default_factory=list)
+    node_timings: list[dict[str, int | str]] = Field(default_factory=list)

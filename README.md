@@ -48,6 +48,20 @@ npm run dev
 Frontend:
 - `http://127.0.0.1:3000`
 
+## Run With Docker
+
+```bash
+docker compose up --build
+```
+
+Endpoints:
+- Frontend: `http://localhost:3000`
+- Backend health: `http://localhost:8000/health`
+
+Notes:
+- Persistent data is mounted via `./data:/app/data` (processed JSON, Chroma, ops DB).
+- Default admin token in compose: `dev-admin-token` (`SANJAYA_ADMIN_TOKEN`).
+
 ## Demo Flow
 
 1. Open frontend.

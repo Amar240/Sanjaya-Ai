@@ -1,23 +1,53 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { askAdvisor } from "@/lib/api";
-import type { AdvisorResponse, PlanResponse } from "@/lib/types";
+import type { AdvisorCitation, AdvisorResponse, PlanResponse } from "@/lib/types";
 
 type AdvisorQAPanelProps = {
   plan: PlanResponse;
+  queuedQuestion?: string | null;
+  queuedQuestionNonce?: number;
 };
 
-export default function AdvisorQAPanel({ plan }: AdvisorQAPanelProps): JSX.Element {
+function anchorId(prefix: string, raw: string): string {
+  return `${prefix}-${raw.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
+}
+
+function scrollToCitationTarget(citation: AdvisorCitation): void {
+  const targetId = citation.evidence_id
+    ? anchorId("evidence", citation.evidence_id)
+    : citation.course_id
+      ? anchorId("course", citation.course_id)
+      : citation.skill_id
+        ? anchorId("skill", citation.skill_id)
+        : "";
+  if (!targetId) {
+    return;
+  }
+  const node = document.getElementById(targetId);
+  if (!node) {
+    return;
+  }
+  node.scrollIntoView({ behavior: "smooth", block: "center" });
+  node.classList.add("target-highlight");
+  window.setTimeout(() => node.classList.remove("target-highlight"), 1200);
+}
+
+export default function AdvisorQAPanel({
+  plan,
+  queuedQuestion,
+  queuedQuestionNonce,
+}: AdvisorQAPanelProps): JSX.Element {
   const [question, setQuestion] = useState<string>("Why this role for me?");
   const [tone, setTone] = useState<"friendly" | "concise">("friendly");
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string>("");
   const [result, setResult] = useState<AdvisorResponse | null>(null);
 
-  async function handleAsk(): Promise<void> {
-    const content = question.trim();
+  async function handleAsk(explicitQuestion?: string): Promise<void> {
+    const content = (explicitQuestion ?? question).trim();
     if (!content) {
       return;
     }
@@ -26,7 +56,7 @@ export default function AdvisorQAPanel({ plan }: AdvisorQAPanelProps): JSX.Eleme
     try {
       const response = await askAdvisor({
         question: content,
-        plan,
+        plan_id: plan.plan_id,
         tone,
       });
       setResult(response);
@@ -36,6 +66,15 @@ export default function AdvisorQAPanel({ plan }: AdvisorQAPanelProps): JSX.Eleme
       setLoading(false);
     }
   }
+
+  useEffect(() => {
+    if (!queuedQuestion || !queuedQuestionNonce) {
+      return;
+    }
+    setQuestion(queuedQuestion);
+    void handleAsk(queuedQuestion);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [queuedQuestionNonce]);
 
   return (
     <article className="subpanel advisor-panel">
@@ -78,6 +117,7 @@ export default function AdvisorQAPanel({ plan }: AdvisorQAPanelProps): JSX.Eleme
             <strong>Answer:</strong> {result.answer}
           </p>
           <p className="muted">
+            Plan: <span className="mono">{result.plan_id}</span> |{" "}
             Intent: {result.intent} | Confidence: {Math.round(result.confidence * 100)}% | LLM:{" "}
             {result.llm_status}
           </p>
@@ -115,6 +155,15 @@ export default function AdvisorQAPanel({ plan }: AdvisorQAPanelProps): JSX.Eleme
                       <a href={item.source_url} target="_blank" rel="noreferrer">
                         Open source
                       </a>
+                    ) : null}
+                    {item.evidence_id || item.course_id || item.skill_id ? (
+                      <button
+                        type="button"
+                        className="btn-secondary"
+                        onClick={() => scrollToCitationTarget(item)}
+                      >
+                        Jump to context
+                      </button>
                     ) : null}
                   </li>
                 ))}

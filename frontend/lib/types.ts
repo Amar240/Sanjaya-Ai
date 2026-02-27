@@ -26,6 +26,7 @@ export type StudentProfileInput = {
 export type PlanRequest = {
   student_profile: StudentProfileInput;
   preferred_role_id?: string | null;
+  requested_role_text?: string | null;
 };
 
 export type SkillCoverage = {
@@ -43,6 +44,7 @@ export type PlanSemester = {
 };
 
 export type EvidencePanelItem = {
+  evidence_id: string;
   role_id: string;
   skill_id: string;
   skill_name: string;
@@ -51,6 +53,8 @@ export type EvidencePanelItem = {
   source_title: string;
   source_url: string;
   snippet: string;
+  retrieval_method: "vector" | "lexical" | "hybrid";
+  rank_score?: number | null;
   confidence?: number | null;
 };
 
@@ -85,17 +89,90 @@ export type FusionSummary = {
   readiness: FusionReadiness;
 };
 
+export type CandidateRole = {
+  role_id: string;
+  role_title: string;
+  score: number;
+  reasons: string[];
+};
+
+export type PlanError = {
+  code:
+    | "COURSE_NOT_FOUND"
+    | "PREREQ_ORDER"
+    | "CREDIT_OVER_MAX"
+    | "CREDITS_BELOW_MIN"
+    | "LEVEL_MISMATCH"
+    | "OFFERING_MISMATCH"
+    | "DUPLICATE_COURSE"
+    | "ANTIREQ_CONFLICT"
+    | "COREQ_NOT_SATISFIED"
+    | "SKILL_GAP"
+    | "PREREQ_EXTERNAL_REF"
+    | "PREREQ_COMPLEX_UNSUPPORTED"
+    | "EVIDENCE_INTEGRITY_VIOLATION"
+    | "ROLE_REQUEST_UNRESOLVED";
+  message: string;
+  course_id?: string | null;
+  prereq_id?: string | null;
+  term?: Term | null;
+  details?: Record<string, unknown>;
+};
+
+export type RoleRequestItem = {
+  role_request_id: string;
+  role_query_norm: string;
+  examples: string[];
+  count: number;
+  first_seen: string;
+  last_seen: string;
+  top_candidates: { role_id: string; score: number }[];
+  status: "open" | "mapped" | "created_role" | "ignored";
+  resolution: {
+    mapped_role_id?: string | null;
+    new_role_id?: string | null;
+    note?: string | null;
+  };
+};
+
+export type InsightsSummary = {
+  window: string;
+  events_total: number;
+  top_roles_selected: { key: string; count: number }[];
+  top_role_searches: { key: string; count: number }[];
+  top_unknown_role_requests: {
+    role_request_id: string;
+    role_query_norm: string;
+    count: number;
+    status: string;
+  }[];
+  top_error_codes: { key: string; count: number }[];
+  top_intents: { key: string; count: number }[];
+  severity_breakdown: { warnings: number; errors: number };
+};
+
+export type NodeTiming = {
+  node: string;
+  timing_ms: number;
+};
+
 export type PlanResponse = {
+  request_id: string;
+  plan_id: string;
+  cache_status: "hit" | "miss";
+  data_version: string;
   selected_role_id: string;
   selected_role_title: string;
   skill_coverage: SkillCoverage[];
   semesters: PlanSemester[];
-  validation_errors: string[];
+  validation_errors: PlanError[];
   notes: string[];
+  candidate_roles: CandidateRole[];
   evidence_panel?: EvidencePanelItem[];
   course_purpose_cards?: CoursePurposeCard[];
   fusion_summary?: FusionSummary | null;
   agent_trace?: string[];
+  node_timings?: NodeTiming[];
 };
 
 export type ChatTurn = {
@@ -144,7 +221,8 @@ export type ChatResponse = {
 
 export type AdvisorRequest = {
   question: string;
-  plan: PlanResponse;
+  plan_id?: string;
+  plan?: PlanResponse;
   tone?: "friendly" | "concise";
 };
 
@@ -158,9 +236,14 @@ export type AdvisorCitation = {
   label: string;
   detail: string;
   source_url?: string | null;
+  evidence_id?: string | null;
+  course_id?: string | null;
+  skill_id?: string | null;
 };
 
 export type AdvisorResponse = {
+  request_id: string;
+  plan_id: string;
   intent: string;
   answer: string;
   reasoning_points: string[];

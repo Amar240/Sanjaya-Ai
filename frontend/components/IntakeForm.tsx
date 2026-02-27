@@ -45,6 +45,7 @@ export default function IntakeForm({
   const [fusionDomainText, setFusionDomainText] = useState<string>("");
   const [completedCoursesText, setCompletedCoursesText] = useState<string>("");
   const [preferredRoleId, setPreferredRoleId] = useState<string>("");
+  const [requestedRoleText, setRequestedRoleText] = useState<string>("");
   const [localError, setLocalError] = useState<string>("");
 
   const roleOptions = useMemo(() => {
@@ -115,7 +116,8 @@ export default function IntakeForm({
         max_credits: maxCredits,
         interests: parseCsv(interestsText)
       },
-      preferred_role_id: preferredRoleId || null
+      preferred_role_id: preferredRoleId || null,
+      requested_role_text: requestedRoleText.trim() || null
     };
 
     await onSubmit(payload);
@@ -276,6 +278,16 @@ export default function IntakeForm({
             value={interestsText}
             onChange={(e) => setInterestsText(e.target.value)}
             placeholder="ai, finance, cybersecurity"
+          />
+        </label>
+
+        <label>
+          Role I&apos;m Looking For (optional)
+          <input
+            type="text"
+            value={requestedRoleText}
+            onChange={(e) => setRequestedRoleText(e.target.value)}
+            placeholder="e.g. AI policy architect"
           />
         </label>
 

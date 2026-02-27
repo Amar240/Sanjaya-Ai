@@ -7,17 +7,48 @@ import re
 import time
 from urllib import error as urllib_error
 from urllib import request as urllib_request
+import uuid
 
 from ..data_loader import CatalogStore
 from ..schemas.advisor import AdvisorCitation, AdvisorRequest, AdvisorResponse
-from ..schemas.plan import CoursePurposeCard, EvidencePanelItem, PlanSemester
+from ..schemas.plan import CoursePurposeCard, EvidencePanelItem, PlanResponse, PlanSemester
 
 
-def answer_advisor_question(request: AdvisorRequest, store: CatalogStore) -> AdvisorResponse:
+def answer_advisor_question(
+    request: AdvisorRequest,
+    store: CatalogStore,
+    *,
+    resolved_plan: PlanResponse | None = None,
+    resolved_plan_id: str | None = None,
+) -> AdvisorResponse:
     question = request.question.strip()
-    plan = request.plan
+    plan = resolved_plan or request.plan
+    if plan is None:
+        raise ValueError("Advisor request requires a resolved plan context.")
+    plan_id = resolved_plan_id or request.plan_id or plan.plan_id
+    request_id = plan.request_id or str(uuid.uuid4())
     intent = _detect_intent(question)
     tokens = _tokenize(question)
+
+    if _is_out_of_context_request(question):
+        return AdvisorResponse(
+            request_id=request_id,
+            plan_id=plan_id,
+            intent="safety_limit",
+            answer=(
+                "I cannot guarantee job outcomes or salary. I can help you improve readiness by "
+                "analyzing your current plan coverage, prerequisites, and next academic actions."
+            ),
+            reasoning_points=[
+                "Career outcomes depend on many factors outside this plan.",
+                "This assistant is constrained to your roadmap context and cannot promise results.",
+            ],
+            citations=[],
+            confidence=0.6,
+            used_llm=False,
+            llm_status="disabled",
+            llm_error=None,
+        )
 
     course_card_by_id = {card.course_id: card for card in (plan.course_purpose_cards or [])}
 
@@ -53,6 +84,11 @@ def answer_advisor_question(request: AdvisorRequest, store: CatalogStore) -> Adv
             plan=plan,
             store=store,
         )
+    elif intent == "alternatives_compare":
+        answer, reasoning_points, citations, confidence = _answer_alternatives_compare(
+            question=question,
+            plan=plan,
+        )
     elif intent == "next_best_action":
         answer, reasoning_points, citations, confidence = _answer_next_best_action(
             plan=plan,
@@ -75,20 +111,24 @@ def answer_advisor_question(request: AdvisorRequest, store: CatalogStore) -> Adv
     )
     if llm_out:
         answer = llm_out.get("answer", answer)
-        llm_reasoning = llm_out.get("reasoning_points")
-        if isinstance(llm_reasoning, list):
-            reasoning_points = [str(item) for item in llm_reasoning if str(item).strip()][:6]
-        llm_conf = llm_out.get("confidence")
-        if isinstance(llm_conf, (int, float)):
-            confidence = max(0.0, min(1.0, float(llm_conf)))
         used_llm = True
         llm_status = "used"
 
+    deduped_citations = _dedupe_citations(citations)[:10]
+    validated_citations, dropped = _validate_citations(deduped_citations, plan)
+    if dropped > 0:
+        reasoning_points.append(
+            "Some citations were omitted because they could not be resolved to plan context."
+        )
+        confidence = max(0.0, confidence - 0.05)
+
     return AdvisorResponse(
+        request_id=request_id,
+        plan_id=plan_id,
         intent=intent,
         answer=answer,
         reasoning_points=reasoning_points[:6],
-        citations=_dedupe_citations(citations)[:10],
+        citations=validated_citations,
         confidence=max(0.0, min(1.0, confidence)),
         used_llm=used_llm,
         llm_status=llm_status,
@@ -98,6 +138,8 @@ def answer_advisor_question(request: AdvisorRequest, store: CatalogStore) -> Adv
 
 def _detect_intent(question: str) -> str:
     lower = question.lower()
+    if any(term in lower for term in ("why not", "instead of", "compare to", "compared to")):
+        return "alternatives_compare"
     if re.search(r"\bwhy\b", lower) and (
         "role" in lower
         or "data engineer" in lower
@@ -189,6 +231,7 @@ def _answer_why_role(
                 citation_type="skill_coverage",
                 label=item.required_skill_id,
                 detail=f"Mapped courses: {', '.join(item.matched_courses[:5]) or 'none'}",
+                skill_id=item.required_skill_id,
             )
         )
 
@@ -338,6 +381,7 @@ def _answer_capability(
                 citation_type="skill_coverage",
                 label=item.required_skill_id,
                 detail=f"Mapped courses: {', '.join(item.matched_courses[:5]) or 'none'}",
+                skill_id=item.required_skill_id,
             )
         )
     if hardest_semester:
@@ -418,6 +462,7 @@ def _answer_next_best_action(
                 citation_type="skill_coverage",
                 label=next_skill.required_skill_id,
                 detail="Currently uncovered in plan skill coverage.",
+                skill_id=next_skill.required_skill_id,
             )
         )
     else:
@@ -499,6 +544,57 @@ def _answer_alternatives(
     return answer, reasoning, citations, 0.74
 
 
+def _answer_alternatives_compare(
+    question: str,
+    plan,
+) -> tuple[str, list[str], list[AdvisorCitation], float]:
+    candidates = list(plan.candidate_roles or [])
+    if not candidates:
+        return (
+            "I do not have candidate role rankings in this plan output, so I cannot run a grounded why-not comparison yet.",
+            ["candidate_roles is empty in this plan context."],
+            [],
+            0.45,
+        )
+
+    selected = next(
+        (item for item in candidates if item.role_id == plan.selected_role_id),
+        candidates[0],
+    )
+    target = _find_referenced_candidate(question, candidates)
+    if target is None:
+        target = next((item for item in candidates if item.role_id != selected.role_id), selected)
+
+    reasoning = [
+        f"Selected candidate score: {selected.role_title} ({selected.role_id}) = {selected.score:.3f}.",
+        f"Compared candidate score: {target.role_title} ({target.role_id}) = {target.score:.3f}.",
+    ]
+    reasoning.extend(target.reasons[:2])
+    if selected.role_id != target.role_id:
+        reasoning.append(f"Deterministic score gap: {round(selected.score - target.score, 3)}.")
+    else:
+        reasoning.append("The referenced role is the current top candidate in this plan.")
+
+    citations = [
+        AdvisorCitation(
+            citation_type="policy_note",
+            label=f"Candidate role {selected.role_id}",
+            detail=f"score={selected.score:.3f}; reasons={'; '.join(selected.reasons[:2])}",
+        ),
+        AdvisorCitation(
+            citation_type="policy_note",
+            label=f"Candidate role {target.role_id}",
+            detail=f"score={target.score:.3f}; reasons={'; '.join(target.reasons[:2])}",
+        ),
+    ]
+    answer = (
+        f"Compared with {target.role_title}, {selected.role_title} is ranked higher in the deterministic candidate list for this request."
+    )
+    if selected.role_id == target.role_id:
+        answer = f"{target.role_title} is currently the top-ranked candidate in this plan."
+    return answer, reasoning, citations, 0.8
+
+
 def _answer_general(question: str, plan) -> tuple[str, list[str], list[AdvisorCitation], float]:
     total = len(plan.skill_coverage)
     covered = sum(1 for item in plan.skill_coverage if item.covered)
@@ -555,6 +651,8 @@ def _citation_from_evidence(item: EvidencePanelItem) -> AdvisorCitation:
         label=f"{item.skill_name} via {item.source_provider}",
         detail=item.snippet,
         source_url=item.source_url,
+        evidence_id=item.evidence_id,
+        skill_id=item.skill_id,
     )
 
 
@@ -563,6 +661,7 @@ def _citation_from_course_card(card: CoursePurposeCard) -> AdvisorCitation:
         citation_type="course",
         label=f"{card.course_id} - {card.course_title}",
         detail=card.why_this_course,
+        course_id=card.course_id,
     )
 
 
@@ -608,10 +707,72 @@ def _tokenize(text: str) -> set[str]:
     return set(re.findall(r"[a-z0-9]+", text.lower()))
 
 
+def _find_referenced_candidate(question: str, candidates):
+    lowered = question.lower()
+    for item in candidates:
+        if item.role_id.lower() in lowered:
+            return item
+        if item.role_title.lower() in lowered:
+            return item
+    return None
+
+
+def _is_out_of_context_request(question: str) -> bool:
+    lower = question.lower()
+    patterns = (
+        "guarantee job",
+        "guaranteed job",
+        "guarantee placement",
+        "guaranteed salary",
+        "100% job",
+        "certain job",
+        "promise job",
+        "will i definitely get",
+    )
+    if any(pattern in lower for pattern in patterns):
+        return True
+    return bool(re.search(r"guarantee.*job|job.*guarantee", lower))
+
+
+def _validate_citations(
+    citations: list[AdvisorCitation],
+    plan,
+) -> tuple[list[AdvisorCitation], int]:
+    evidence_ids = {item.evidence_id for item in (plan.evidence_panel or [])}
+    planned_course_ids = {
+        course_id
+        for sem in plan.semesters
+        for course_id in sem.courses
+    }
+    skill_ids = {item.required_skill_id for item in plan.skill_coverage}
+
+    kept: list[AdvisorCitation] = []
+    dropped = 0
+    for citation in citations:
+        if citation.evidence_id and citation.evidence_id not in evidence_ids:
+            dropped += 1
+            continue
+        if citation.course_id and citation.course_id not in planned_course_ids:
+            dropped += 1
+            continue
+        if citation.skill_id and citation.skill_id not in skill_ids:
+            dropped += 1
+            continue
+        kept.append(citation)
+    return kept, dropped
+
+
 def _dedupe_citations(citations: list[AdvisorCitation]) -> list[AdvisorCitation]:
-    unique: dict[tuple[str, str, str], AdvisorCitation] = {}
+    unique: dict[tuple[str, str, str, str | None, str | None, str | None], AdvisorCitation] = {}
     for item in citations:
-        key = (item.citation_type, item.label, item.detail)
+        key = (
+            item.citation_type,
+            item.label,
+            item.detail,
+            item.evidence_id,
+            item.course_id,
+            item.skill_id,
+        )
         if key not in unique:
             unique[key] = item
     return list(unique.values())
@@ -646,7 +807,7 @@ def _plan_context_for_llm(plan) -> dict:
             }
             for sem in plan.semesters[:8]
         ],
-        "validation_errors": plan.validation_errors[:6],
+        "validation_errors": [item.model_dump() for item in plan.validation_errors[:6]],
         "notes": plan.notes[:8],
     }
 
@@ -700,9 +861,9 @@ def _llm_compose_answer(
         return None, None, "disabled"
     system_prompt = (
         "You are Sanjaya AI, a grounded academic advisor assistant. "
-        "Compose a fresh, human-friendly answer using ONLY the provided context. "
+        "Rewrite ONLY the provided deterministic answer for clarity using ONLY the provided context. "
         "Do not add new facts, no job guarantees, no fabricated courses, no fabricated requirements. "
-        "If context is insufficient, state limits clearly. "
+        "Do not modify reasoning points, confidence, or citations. "
         "Return strict JSON only."
     )
     user_payload = {
@@ -711,18 +872,13 @@ def _llm_compose_answer(
         "question": request.question,
         "deterministic_answer": answer,
         "plan_context": _plan_context_for_llm(plan),
-        "reasoning_points": reasoning_points,
-        "citations": [item.model_dump() for item in citations[:8]],
         "writing_rules": [
-            "Write a fresh response; do not simply copy deterministic_answer.",
-            "Address the student's question directly in first sentence.",
-            "Use 3-6 sentences in friendly mode, 2-4 in concise mode.",
-            "Stay factual and grounded to provided context."
+            "Rewrite only the answer text.",
+            "Do not add facts beyond deterministic_answer and plan_context.",
+            "Friendly tone: 3-6 sentences. Concise tone: 2-4 sentences.",
         ],
         "required_output_schema": {
             "answer": "string",
-            "reasoning_points": ["string"],
-            "confidence": "float_0_to_1",
         },
     }
     payload = {
@@ -793,7 +949,14 @@ def _llm_compose_answer(
                             out = candidate
 
             if isinstance(out, dict):
-                return out, None, "used"
+                rewritten = out.get("answer")
+                if isinstance(rewritten, str) and rewritten.strip():
+                    return {"answer": rewritten.strip()}, None, "used"
+                last_error = f"{provider}_missing_answer"
+                if attempt < retries:
+                    time.sleep(0.8 * (attempt + 1))
+                    continue
+                return None, last_error, "fallback"
 
             last_error = f"{provider}_invalid_json_payload"
             if attempt < retries:

@@ -3,8 +3,10 @@ import type {
   AdvisorResponse,
   ChatRequest,
   ChatResponse,
+  InsightsSummary,
   PlanRequest,
   PlanResponse,
+  RoleRequestItem,
   RoleOption
 } from "@/lib/types";
 
@@ -65,4 +67,81 @@ export async function askAdvisor(
   });
   const payload = await parseJsonOrError(response);
   return payload as AdvisorResponse;
+}
+
+export async function fetchAdminInsights(window = "30d"): Promise<InsightsSummary> {
+  const response = await fetch(`/api/admin/insights?window=${encodeURIComponent(window)}`, {
+    method: "GET",
+    cache: "no-store"
+  });
+  const payload = await parseJsonOrError(response);
+  return payload as InsightsSummary;
+}
+
+export async function fetchRoleRequests(
+  params: { status?: string; min_count?: number; show_all?: boolean } = {}
+): Promise<RoleRequestItem[]> {
+  const qs = new URLSearchParams();
+  if (params.status) qs.set("status", params.status);
+  if (typeof params.min_count === "number") qs.set("min_count", String(params.min_count));
+  if (typeof params.show_all === "boolean") qs.set("show_all", params.show_all ? "true" : "false");
+  const response = await fetch(`/api/admin/role-requests?${qs.toString()}`, {
+    method: "GET",
+    cache: "no-store"
+  });
+  const payload = await parseJsonOrError(response);
+  if (payload && typeof payload === "object" && "items" in payload) {
+    return (payload as { items: RoleRequestItem[] }).items;
+  }
+  return [];
+}
+
+export async function fetchRoleRequestById(roleRequestId: string): Promise<RoleRequestItem> {
+  const response = await fetch(`/api/admin/role-requests/${encodeURIComponent(roleRequestId)}`, {
+    method: "GET",
+    cache: "no-store"
+  });
+  const payload = await parseJsonOrError(response);
+  return payload as RoleRequestItem;
+}
+
+export async function ignoreRoleRequest(roleRequestId: string): Promise<RoleRequestItem> {
+  const response = await fetch(
+    `/api/admin/role-requests/${encodeURIComponent(roleRequestId)}/ignore`,
+    { method: "POST" }
+  );
+  const payload = await parseJsonOrError(response);
+  return payload as RoleRequestItem;
+}
+
+export async function mapRoleRequest(
+  roleRequestId: string,
+  mappedRoleId: string,
+  note?: string
+): Promise<RoleRequestItem> {
+  const response = await fetch(
+    `/api/admin/role-requests/${encodeURIComponent(roleRequestId)}/map`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mapped_role_id: mappedRoleId, note: note ?? null })
+    }
+  );
+  const payload = await parseJsonOrError(response);
+  return payload as RoleRequestItem;
+}
+
+export async function createRoleFromRequest(
+  roleRequestId: string
+): Promise<{ draft_id: string; new_role_id: string }> {
+  const response = await fetch(
+    `/api/admin/role-requests/${encodeURIComponent(roleRequestId)}/create-role`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({})
+    }
+  );
+  const payload = await parseJsonOrError(response);
+  return payload as { draft_id: string; new_role_id: string };
 }

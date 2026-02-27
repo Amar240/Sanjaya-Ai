@@ -38,6 +38,12 @@ def build_plan(request: PlanRequest, store: CatalogStore) -> PlanResponse:
         courses_by_id=courses_by_id,
         skills_by_id=skills_by_id,
     )
+    curated_course_ids = {
+        row.course_id
+        for row in store.curated_role_skill_courses
+        if row.role_id == role.role_id and row.course_id in courses_by_id
+    }
+    course_skill_contribution = _build_course_skill_contribution(role, skill_matches)
     target_courses = _select_target_courses(role, skill_matches, courses_by_id)
     expanded_targets = _expand_with_prereqs(target_courses, courses_by_id)
     supplemental_pool, supplemental_relevance = _build_supplemental_pool(
@@ -55,6 +61,8 @@ def build_plan(request: PlanRequest, store: CatalogStore) -> PlanResponse:
         supplemental_relevance=supplemental_relevance,
         courses_by_id=courses_by_id,
         role_id=role.role_id,
+        curated_course_ids=curated_course_ids,
+        course_skill_contribution=course_skill_contribution,
         completed_courses=set(request.student_profile.completed_courses),
         start_term=request.student_profile.start_term,
         include_optional_terms=request.student_profile.include_optional_terms,
@@ -378,6 +386,18 @@ def _expand_with_prereqs(target_courses: set[str], courses_by_id: dict[str, Cour
     return expanded
 
 
+def _build_course_skill_contribution(
+    role: RoleMarket,
+    skill_matches: dict[str, list[str]],
+) -> dict[str, int]:
+    required_skill_ids = {req.skill_id for req in role.required_skills}
+    contribution: dict[str, set[str]] = defaultdict(set)
+    for skill_id in required_skill_ids:
+        for course_id in skill_matches.get(skill_id, []):
+            contribution[course_id].add(skill_id)
+    return {course_id: len(skills) for course_id, skills in contribution.items()}
+
+
 def _choose_accessible_course(
     candidates: list[str],
     courses_by_id: dict[str, Course],
@@ -451,6 +471,8 @@ def _schedule_semesters(
     supplemental_relevance: dict[str, float],
     courses_by_id: dict[str, Course],
     role_id: str,
+    curated_course_ids: set[str],
+    course_skill_contribution: dict[str, int],
     completed_courses: set[str],
     start_term: str,
     include_optional_terms: bool,
@@ -478,22 +500,46 @@ def _schedule_semesters(
     except ValueError:
         start_idx = 0
 
+    in_graph_dependencies: dict[str, set[str]] = {}
+    for course_id in remaining:
+        prereqs = set()
+        course = courses_by_id[course_id]
+        for prereq in course.prerequisites:
+            if prereq in remaining and prereq in courses_by_id:
+                prereqs.add(prereq)
+        in_graph_dependencies[course_id] = prereqs
+    prereq_depths = _dependency_depths(in_graph_dependencies)
+
     max_horizon = 16
+    cycle_progress = False
     for term_offset in range(max_horizon):
         if not remaining:
             break
         term = term_cycle[(start_idx + term_offset) % len(term_cycle)]
 
-        available = [
-            courses_by_id[cid]
-            for cid in remaining
-            if _prereqs_ready(courses_by_id[cid], completed, courses_by_id)
-            and _is_offered_in_term(courses_by_id[cid], term)
-        ]
+        available = []
+        for cid in sorted(remaining):
+            course = courses_by_id[cid]
+            if not in_graph_dependencies.get(cid, set()).issubset(completed):
+                continue
+            if not _is_offered_in_term(course, term):
+                continue
+            available.append(course)
         if not available:
+            if (term_offset + 1) % len(term_cycle) == 0:
+                if not cycle_progress:
+                    break
+                cycle_progress = False
             continue
 
-        available.sort(key=lambda c: (c.course_id not in target_courses, len(c.prerequisites), c.course_id))
+        available.sort(
+            key=lambda c: (
+                c.course_id not in curated_course_ids,
+                -course_skill_contribution.get(c.course_id, 0),
+                prereq_depths.get(c.course_id, 0),
+                c.course_id,
+            )
+        )
         selected: list[Course] = []
         credit_sum = 0.0
 
@@ -564,6 +610,10 @@ def _schedule_semesters(
                     break
 
         if not selected:
+            if (term_offset + 1) % len(term_cycle) == 0:
+                if not cycle_progress:
+                    break
+                cycle_progress = False
             continue
 
         semester_ids = [c.course_id for c in selected]
@@ -589,6 +639,9 @@ def _schedule_semesters(
                 supplemental_remaining.remove(cid)
             planned.add(cid)
             completed.add(cid)
+        cycle_progress = True
+        if (term_offset + 1) % len(term_cycle) == 0:
+            cycle_progress = False
 
     return semesters, planned, remaining
 
@@ -604,10 +657,56 @@ def _prereqs_ready(course: Course, completed: set[str], courses_by_id: dict[str,
     return True
 
 
+def _dependency_depths(dependencies: dict[str, set[str]]) -> dict[str, int]:
+    memo: dict[str, int] = {}
+
+    def depth(course_id: str, stack: set[str]) -> int:
+        if course_id in memo:
+            return memo[course_id]
+        if course_id in stack:
+            return 0
+        stack.add(course_id)
+        prereqs = dependencies.get(course_id, set())
+        if not prereqs:
+            out = 0
+        else:
+            out = 1 + max(depth(prereq, stack) for prereq in prereqs)
+        stack.remove(course_id)
+        memo[course_id] = out
+        return out
+
+    for course_id in dependencies:
+        depth(course_id, set())
+    return memo
+
+
 def _is_offered_in_term(course: Course, term: str) -> bool:
     if not course.offered_terms:
         return True
-    return term in course.offered_terms
+    normalized_term = _normalize_term_label(term)
+    offered_terms = {
+        normalized
+        for raw in course.offered_terms
+        if (normalized := _normalize_term_label(raw))
+    }
+    if not offered_terms:
+        return True
+    return normalized_term in offered_terms
+
+
+def _normalize_term_label(value: str) -> str:
+    raw = (value or "").strip().lower()
+    if not raw:
+        return ""
+    if raw.startswith("fall") or raw.startswith("autumn"):
+        return "Fall"
+    if raw.startswith("spring"):
+        return "Spring"
+    if raw.startswith("summer"):
+        return "Summer"
+    if raw.startswith("winter"):
+        return "Winter"
+    return value.strip().title()
 
 
 def _build_skill_coverage(

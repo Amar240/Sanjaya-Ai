@@ -4,6 +4,7 @@ import type { PlanResponse } from "@/lib/types";
 
 type CareerPathMapProps = {
   plan: PlanResponse;
+  onAskWhyNotRole?: (roleId: string, roleTitle: string) => void;
 };
 
 function mappedSkillsForCourse(plan: PlanResponse, courseId: string): string[] {
@@ -14,7 +15,14 @@ function mappedSkillsForCourse(plan: PlanResponse, courseId: string): string[] {
   return card.satisfied_skills;
 }
 
-export default function CareerPathMap({ plan }: CareerPathMapProps): JSX.Element {
+export default function CareerPathMap({
+  plan,
+  onAskWhyNotRole,
+}: CareerPathMapProps): JSX.Element {
+  const alternatives = (plan.candidate_roles || []).filter(
+    (item) => item.role_id !== plan.selected_role_id
+  );
+
   return (
     <article className="subpanel career-map">
       <h3>Visual Career Path</h3>
@@ -27,6 +35,42 @@ export default function CareerPathMap({ plan }: CareerPathMapProps): JSX.Element
           <p className="eyebrow">Target Role</p>
           <strong>{plan.selected_role_title}</strong>
           <p className="muted mono">{plan.selected_role_id}</p>
+          {plan.candidate_roles?.length ? (
+            <div className="alt-role-block">
+              <p className="eyebrow">Top Alternatives</p>
+              <ul className="plain-list">
+                {alternatives.length ? (
+                  alternatives.map((item) => (
+                    <li key={`candidate-${item.role_id}`}>
+                      <p>
+                        <strong>{item.role_title}</strong>{" "}
+                        <span className="muted mono">({item.role_id})</span>
+                      </p>
+                      <p className="muted">Score: {item.score.toFixed(3)}</p>
+                      <ul className="plain-list">
+                        {item.reasons.map((reason, idx) => (
+                          <li key={`${item.role_id}-reason-${idx}`} className="muted">
+                            {reason}
+                          </li>
+                        ))}
+                      </ul>
+                      {onAskWhyNotRole ? (
+                        <button
+                          type="button"
+                          className="btn-secondary"
+                          onClick={() => onAskWhyNotRole(item.role_id, item.role_title)}
+                        >
+                          Ask: Why not this role?
+                        </button>
+                      ) : null}
+                    </li>
+                  ))
+                ) : (
+                  <li className="muted">No alternatives were ranked for this run.</li>
+                )}
+              </ul>
+            </div>
+          ) : null}
         </div>
 
         <div className="path-connector" aria-hidden />

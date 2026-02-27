@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import dataclass
 from pathlib import Path
@@ -32,6 +33,7 @@ class CatalogStore:
     evidence_links: list[RoleSkillEvidence]
     sources: list[SourceReference]
     warnings: list[str]
+    data_version: str = ""
 
     @property
     def roles_by_id(self) -> dict[str, RoleMarket]:
@@ -53,6 +55,8 @@ def _project_root() -> Path:
 def load_catalog_store(data_dir: Path | None = None) -> CatalogStore:
     root = _project_root()
     processed = data_dir or (root / "data" / "processed")
+    data_files, roles_path = _resolve_data_files(processed)
+    data_version = _compute_data_version(data_files)
 
     courses = [Course.model_validate(x) for x in _read_json(processed / "courses.json")]
     course_skills = [
@@ -71,9 +75,6 @@ def load_catalog_store(data_dir: Path | None = None) -> CatalogStore:
         if fusion_path.exists()
         else []
     )
-    calibrated_roles_path = processed / "roles_market_calibrated.json"
-    default_roles_path = processed / "roles_market.json"
-    roles_path = calibrated_roles_path if calibrated_roles_path.exists() else default_roles_path
     roles = [RoleMarket.model_validate(x) for x in _read_json(roles_path)]
     skills = [SkillMarket.model_validate(x) for x in _read_json(processed / "skills_market.json")]
     evidence_links = [
@@ -115,6 +116,7 @@ def load_catalog_store(data_dir: Path | None = None) -> CatalogStore:
         evidence_links=evidence_links,
         sources=sources,
         warnings=warnings,
+        data_version=data_version,
     )
 
 
@@ -233,3 +235,38 @@ def _validate_course_prereqs(courses: list[Course]) -> list[str]:
             f"Global catalog-wide external prerequisite references: {len(missing_refs)}."
         )
     return warnings
+
+
+def _resolve_data_files(processed: Path) -> tuple[list[Path], Path]:
+    calibrated_roles_path = processed / "roles_market_calibrated.json"
+    default_roles_path = processed / "roles_market.json"
+    roles_path = calibrated_roles_path if calibrated_roles_path.exists() else default_roles_path
+
+    files = [
+        processed / "courses.json",
+        processed / "course_skills.json",
+        roles_path,
+        processed / "skills_market.json",
+        processed / "role_skill_evidence.json",
+        processed / "market_sources.json",
+    ]
+    optional_files = [
+        processed / "course_skills_curated.json",
+        processed / "fusion_roles.json",
+    ]
+    for path in optional_files:
+        if path.exists():
+            files.append(path)
+
+    files = sorted(files, key=lambda p: str(p.resolve()).lower())
+    return files, roles_path
+
+
+def _compute_data_version(files: list[Path]) -> str:
+    hasher = hashlib.sha256()
+    for path in files:
+        hasher.update(str(path.resolve()).encode("utf-8"))
+        hasher.update(b"\0")
+        hasher.update(path.read_bytes())
+        hasher.update(b"\0")
+    return hasher.hexdigest()
