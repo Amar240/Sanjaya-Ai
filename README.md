@@ -1,34 +1,118 @@
 # Sanjaya AI – Explainable Career Roadmaps
 
-Sanjaya AI helps students see how their **courses lead to a real job** (for example, **AI Engineer**) and gives universities an **advisor/admin surface** to govern roles, skills, and evidence.
+Sanjaya AI connects a student’s course plan to concrete roles in the job market (for example, **AI Engineer**), with a planner that respects credits and prerequisites and an advisor surface for universities.
+This repo is set up so a judge can unzip, follow one short section in this README, and run the full demo.
 
-Students get a **credit‑aware, prerequisite‑safe roadmap** plus explainable AI; advisors get analytics, unknown‑role requests, and publish gates for new roles.
+---
+
+## Quick start for judges
+
+From the unzipped folder (`SanjayaAi/`), choose **either Option A or Option B**.
+
+### Option A – Local run (Python + Node)
+
+**1. Start the backend (FastAPI)**
+
+Windows (PowerShell):
+
+```powershell
+cd backend
+python -m pip install -r requirements.txt
+copy .env.example .env
+uvicorn app.main:app --reload --port 8000
+```
+
+macOS / Linux:
+
+```bash
+cd backend
+python3 -m pip install -r requirements.txt
+cp .env.example .env
+uvicorn app.main:app --reload --port 8000
+```
+
+Check: `http://127.0.0.1:8000/health` should return `{"status":"ok"}`.
+
+**2. Start the frontend (Next.js)**
+
+Open a **second** terminal in the project root:
+
+Windows (PowerShell):
+
+```powershell
+cd frontend
+copy .env.local.example .env.local
+npm install
+npm run dev
+```
+
+macOS / Linux:
+
+```bash
+cd frontend
+cp .env.local.example .env.local
+npm install
+npm run dev
+```
+
+Then open `http://127.0.0.1:3000/` in a browser.
+
+### Option B – Run with Docker Compose
+
+From the project root (`SanjayaAi/`):
+
+```bash
+docker compose up --build
+```
+
+Then open:
+
+- App: `http://localhost:3000`  
+- Backend health: `http://localhost:8000/health`
+
+> LLM features are optional. With the default `.env.example` / `.env.local.example` the planner, validation, and course‑wise roadmap work without any API keys.
+
+---
+
+## One‑click helper scripts (optional)
+
+If you prefer, you can use the helper scripts in the project root instead of typing the individual commands:
+
+- Windows (PowerShell):
+
+  ```powershell
+  ./run_local.ps1
+  ```
+
+- macOS / Linux:
+
+  ```bash
+  chmod +x run_local.sh   # first time only
+  ./run_local.sh
+  ```
+
+These scripts install dependencies if needed, copy example env files, and open two terminals: one for the backend and one for the frontend.
 
 ---
 
 ## 90‑second demo checklist
 
-If you only have a minute or two, do **these four steps**:
+If you only have a minute or two, you can skim this flow:
 
-1. **Run backend + frontend**
-   - Backend (FastAPI): `http://127.0.0.1:8000/health` should return OK.
-   - Frontend (Next.js): `http://127.0.0.1:3000/` should load the landing page.
-
-2. **Open `/` and generate a roadmap**
-   - From the landing page (`/`), click **“Build my roadmap”**.
-   - Fill intake for an **Undergraduate, Core, AI Engineer** plan.
+1. **Generate a roadmap**
+   - On `http://127.0.0.1:3000/`, click **“Build my roadmap”**.
+   - Fill intake for an **Undergraduate, Core, AI Engineer** plan (degree total credits = 128).
    - Click **“Generate my roadmap”** to see the dashboard.
 
-3. **Brain Picture → Reality Check (Job Posting) → Preset → Extract & Match**
-   - In **“Your plan in 5 steps”** (**Brain Picture**) select the **“Reality Check (Job Posting)”** tab.
-   - Click **“Load AI / Data job”** (Preset 1 for an AI/Data job posting).
-   - Click **“Extract & Match”** to see mapped/missing skills and project recommendations.
+2. **Inspect the course‑wise plan and validation**
+   - Scroll through the semesters to see course titles, credits, and total credits per term.
+   - Look at the validation summary and open the full list to see codes such as `TOTAL_CREDITS_UNDER_DEGREE` or `PREREQ_ORDER`.
 
-4. **Open `/admin/insights` and `/admin/role-requests`**
-   - `http://127.0.0.1:3000/admin/insights` – Advisor Insights (top roles, error codes, intents).
-   - `http://127.0.0.1:3000/admin/role-requests` – Role Requests Inbox (unknown roles & mappings).
+3. **Use Job Match and Advisor Q&A**
+   - In **“Your path in 5 steps”**, open **“Reality Check (Job Posting)”**, load the AI/Data preset, and click **“Extract & Match”**.
+   - Switch to **“Advisor Q&A”** and ask “Why did you recommend this role?” to see an explanation tied back to skills/courses.
 
-That flow shows: **planner → validation → job match → advisor → governance**.
+The rest of this README goes into more detail if you need it.
 
 ---
 
@@ -216,6 +300,75 @@ This is the path we recommend judges follow for a 2–3 minute demo.
      - Create roles and see publish gates (skills evidence, role reality, project coverage).
 
 ---
+
+## How to read the course‑wise plan and validation
+
+When I walk through the demo, I usually highlight two things: **how courses are structured semester‑by‑semester**, and **how validation explains problems in the plan**.
+
+### Course‑wise structure (semester view)
+
+- The roadmap is grouped by **semester**, with each card showing the courses the planner scheduled in that term.  
+- Inside a semester you can see:
+  - Course code and title.
+  - Credits per course and the **total credits** for that semester.
+  - A short note about what the course contributes (for example, which skills it supports).
+- Across all semesters, the total credits add up to the **degree total credits** you set in the intake (e.g., 128 for undergraduate, 33 for graduate), unless you intentionally keep it lower for flexibility.
+
+In the demo, I usually scroll down the semesters and point out:
+
+- How introductory courses appear earlier, and advanced / capstone courses appear later.  
+- Where AI‑related or security‑related courses show up relative to core math / CS foundations.  
+- That the plan still looks like a normal university degree plan, not a random list of courses.
+
+### Validation panel and messages
+
+On the same dashboard, there is a **validation / warnings section** that explains whether the plan is academically sound. It shows:
+
+- **Green / OK** when prerequisites, credit limits, and degree totals are respected.  
+- **Warnings** when there are soft issues (for example, being a bit under the total degree credits).  
+- **Errors** when there are hard issues (for example, a course is taken before its prerequisite).
+
+Some of the important validation codes we use:
+
+- `TOTAL_CREDITS_OVER_DEGREE` – the sum of all planned credits is higher than the degree total (e.g., above 128 for UG).  
+- `TOTAL_CREDITS_UNDER_DEGREE` – the plan is below the degree total; this is usually shown as a warning so the student can add electives.  
+- `CREDIT_OVER_MAX` – a single semester exceeds the maximum credit load the student said they can handle.  
+- `PREREQ_ORDER` – a course appears before its prerequisite.
+
+In a typical walkthrough I:
+
+1. Show the **top‑level summary** (selected role, skill coverage, and a short validation sentence).  
+2. Open the **full validation list** to show the exact codes and human‑readable explanations.  
+3. Scroll down to a specific semester or course that is referenced by a validation message, so it is clear how the planner arrived at that decision.
+
+The key point for reviewers is that the **validation is deterministic and explainable**: every warning or error code can be traced back to course data, credit rules, and the student’s own inputs, not to a free‑form LLM decision.
+
+---
+
+## Creating the zip for submission
+
+To create the zip you will upload:
+
+- Make sure you are one level **above** the project folder (so you see `SanjayaAi/`).
+- Include:
+  - `SanjayaAi/backend/`
+  - `SanjayaAi/frontend/`
+  - `SanjayaAi/data/`
+  - `SanjayaAi/docs/`
+  - `SanjayaAi/README.md`
+  - `SanjayaAi/run_local.ps1`, `SanjayaAi/run_local.sh`
+- Exclude local environments like `.venv/`, `node_modules/`, and any `.env` files (they are already covered by the `*.example` templates).
+
+Examples:
+
+- Windows Explorer: right‑click the `SanjayaAi` folder → **Send to → Compressed (zipped) folder**.  
+- macOS / Linux (from one directory up):
+
+  ```bash
+  zip -r sanjaya-ai.zip SanjayaAi -x "*/.venv/*" "*/node_modules/*" "*/.env" "*/.env.*"
+  ```
+
+The resulting zip (`sanjaya-ai.zip`) is what the judge can download, unzip, and run using the Quick start section at the top of this README.
 
 ## What is deterministic vs what uses LLM?
 
