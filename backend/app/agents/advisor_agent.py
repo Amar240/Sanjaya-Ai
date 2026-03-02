@@ -11,6 +11,7 @@ import uuid
 
 from ..data_loader import CatalogStore
 from ..schemas.advisor import AdvisorCitation, AdvisorRequest, AdvisorResponse
+from ..schemas.catalog import Course
 from ..schemas.plan import CoursePurposeCard, EvidencePanelItem, PlanResponse, PlanSemester
 
 
@@ -51,6 +52,10 @@ def answer_advisor_question(
         )
 
     course_card_by_id = {card.course_id: card for card in (plan.course_purpose_cards or [])}
+    catalog_course = store.courses_by_id.get(request.course_id) if request.course_id else None
+
+    if request.course_id and intent == "general":
+        intent = "course_qa"
 
     reasoning_points: list[str] = []
     citations: list[AdvisorCitation] = []
@@ -63,12 +68,21 @@ def answer_advisor_question(
             tokens=tokens,
             plan=plan,
         )
+    elif intent == "course_qa":
+        answer, reasoning_points, citations, confidence = _answer_course_qa(
+            course_id=request.course_id,
+            question=question,
+            plan=plan,
+            course_card_by_id=course_card_by_id,
+            catalog_course=catalog_course,
+        )
     elif intent == "why_course":
         answer, reasoning_points, citations, confidence = _answer_why_course(
             question=question,
             tokens=tokens,
             plan=plan,
             course_card_by_id=course_card_by_id,
+            catalog_course=catalog_course,
         )
     elif intent == "feasibility":
         answer, reasoning_points, citations, confidence = _answer_feasibility(plan=plan)
@@ -108,6 +122,7 @@ def answer_advisor_question(
         plan=plan,
         reasoning_points=reasoning_points,
         citations=citations,
+        catalog_course=catalog_course,
     )
     if llm_out:
         answer = llm_out.get("answer", answer)
@@ -255,11 +270,67 @@ def _answer_why_role(
     return answer, reasoning, citations, 0.86
 
 
+def _answer_course_qa(
+    course_id: str,
+    question: str,
+    plan,
+    course_card_by_id: dict[str, CoursePurposeCard],
+    catalog_course: Course | None,
+) -> tuple[str, list[str], list[AdvisorCitation], float]:
+    """Answer course-focused Q&A using catalog description and plan context."""
+    reasoning: list[str] = []
+    citations: list[AdvisorCitation] = []
+    if catalog_course and (catalog_course.description or catalog_course.prerequisites_text):
+        if catalog_course.description:
+            reasoning.append(
+                f"From the catalog: {catalog_course.description[:500]}{'…' if len(catalog_course.description) > 500 else ''}"
+            )
+        if catalog_course.prerequisites_text:
+            reasoning.append(f"Prerequisites: {catalog_course.prerequisites_text}.")
+    card = course_card_by_id.get(course_id)
+    if card:
+        reasoning.append(card.why_this_course)
+        if card.satisfied_skills:
+            reasoning.append(f"Mapped role skills: {', '.join(card.satisfied_skills)}.")
+        citations.append(_citation_from_course_card(card))
+        for ev in card.evidence[:2]:
+            citations.append(_citation_from_evidence(ev))
+    if catalog_course:
+        detail = (
+            (catalog_course.description[:200] + ("…" if len(catalog_course.description) > 200 else ""))
+            if catalog_course.description
+            else "Catalog entry"
+        )
+        citations.append(
+            AdvisorCitation(
+                citation_type="course",
+                label=f"{catalog_course.course_id} - {catalog_course.title}",
+                detail=detail,
+                source_url=str(catalog_course.source_url),
+                course_id=catalog_course.course_id,
+            )
+        )
+    if not reasoning:
+        reasoning.append(
+            "This course appears in your plan; ask 'Why is it on my plan?' for role alignment."
+        )
+    title = catalog_course.title if catalog_course else course_id
+    answer = f"{course_id} ({title}) is in your roadmap. "
+    if catalog_course and catalog_course.description:
+        answer += f"From the catalog: {catalog_course.description[:300]}{'…' if len(catalog_course.description) > 300 else ''}. "
+    if card:
+        answer += "It supports your selected role through the skills and rationale shown below."
+    else:
+        answer += "See the reasoning and citations for how it fits your plan."
+    return answer, reasoning, citations, 0.78
+
+
 def _answer_why_course(
     question: str,
     tokens: set[str],
     plan,
     course_card_by_id: dict[str, CoursePurposeCard],
+    catalog_course: Course | None = None,
 ) -> tuple[str, list[str], list[AdvisorCitation], float]:
     course_ids = re.findall(r"\b[A-Z]{2,5}-\d{3}[A-Z]?\b", question.upper())
     if course_ids:
@@ -275,6 +346,8 @@ def _answer_why_course(
 
     card = course_card_by_id[course_id]
     reasoning = [card.why_this_course]
+    if catalog_course and catalog_course.course_id == course_id and catalog_course.description:
+        reasoning.append(f"Catalog description: {catalog_course.description[:400]}{'…' if len(catalog_course.description) > 400 else ''}")
     if card.satisfied_skills:
         reasoning.append(
             f"Mapped role skills for this course: {', '.join(card.satisfied_skills)}."
@@ -297,6 +370,8 @@ def _answer_why_course(
         f"{course_id} is in your roadmap because it supports the selected role path through mapped skills and/or prerequisite feasibility. "
         "The reasoning and evidence references are listed below."
     )
+    if catalog_course and catalog_course.course_id == course_id and catalog_course.description:
+        answer = f"{course_id} covers: {catalog_course.description[:250]}{'…' if len(catalog_course.description) > 250 else ''}. " + answer
     return answer, reasoning, citations, 0.82
 
 
@@ -778,7 +853,7 @@ def _dedupe_citations(citations: list[AdvisorCitation]) -> list[AdvisorCitation]
     return list(unique.values())
 
 
-def _plan_context_for_llm(plan) -> dict:
+def _plan_context_for_llm(plan, catalog_course: Course | None = None) -> dict:
     covered = sum(1 for item in plan.skill_coverage if item.covered)
     total = len(plan.skill_coverage)
     top_skills = sorted(
@@ -786,7 +861,7 @@ def _plan_context_for_llm(plan) -> dict:
         key=lambda item: (item.covered, len(item.matched_courses)),
         reverse=True,
     )[:5]
-    return {
+    ctx: dict = {
         "selected_role_id": plan.selected_role_id,
         "selected_role_title": plan.selected_role_title,
         "skill_coverage_ratio": f"{covered}/{total}",
@@ -810,18 +885,33 @@ def _plan_context_for_llm(plan) -> dict:
         "validation_errors": [item.model_dump() for item in plan.validation_errors[:6]],
         "notes": plan.notes[:8],
     }
+    if catalog_course:
+        ctx["focused_course"] = {
+            "course_id": catalog_course.course_id,
+            "title": catalog_course.title,
+            "description": (catalog_course.description or "")[:600],
+            "source_url": str(catalog_course.source_url),
+            "prerequisites_text": catalog_course.prerequisites_text or "",
+        }
+    return ctx
 
 
 def _resolve_llm_target(task: str) -> tuple[str | None, str, str, str]:
     provider_pref = os.getenv("LLM_PROVIDER", "auto").strip().lower()
     openai_key = os.getenv("OPENAI_API_KEY", "").strip()
     groq_key = os.getenv("GROQ_API_KEY", "").strip()
+    gemini_key = os.getenv("GEMINI_API_KEY", "").strip()
 
     if task == "advisor":
         openai_model = (
             os.getenv("OPENAI_MODEL_ADVISOR", "").strip()
             or os.getenv("OPENAI_MODEL", "").strip()
             or "gpt-4o-mini"
+        )
+        gemini_model = (
+            os.getenv("GEMINI_MODEL_ADVISOR", "").strip()
+            or os.getenv("GEMINI_MODEL", "").strip()
+            or "gemini-2.0-flash"
         )
         groq_model = (
             os.getenv("GROQ_MODEL_ADVISOR", "").strip()
@@ -830,6 +920,7 @@ def _resolve_llm_target(task: str) -> tuple[str | None, str, str, str]:
         )
     else:
         openai_model = os.getenv("OPENAI_MODEL", "").strip() or "gpt-4o-mini"
+        gemini_model = os.getenv("GEMINI_MODEL", "").strip() or "gemini-2.0-flash"
         groq_model = os.getenv("GROQ_MODEL", "").strip() or "llama-3.3-70b-versatile"
 
     if provider_pref == "openai":
@@ -840,9 +931,25 @@ def _resolve_llm_target(task: str) -> tuple[str | None, str, str, str]:
         if groq_key:
             return "groq", groq_key, groq_model, "https://api.groq.com/openai/v1/chat/completions"
         return None, "", "", ""
+    if provider_pref == "gemini":
+        if gemini_key:
+            return (
+                "gemini",
+                gemini_key,
+                gemini_model,
+                "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+            )
+        return None, "", "", ""
 
     if openai_key:
         return "openai", openai_key, openai_model, "https://api.openai.com/v1/chat/completions"
+    if gemini_key:
+        return (
+            "gemini",
+            gemini_key,
+            gemini_model,
+            "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+        )
     if groq_key:
         return "groq", groq_key, groq_model, "https://api.groq.com/openai/v1/chat/completions"
     return None, "", "", ""
@@ -855,10 +962,12 @@ def _llm_compose_answer(
     plan,
     reasoning_points: list[str],
     citations: list[AdvisorCitation],
+    catalog_course: Course | None = None,
 ) -> tuple[dict | None, str | None, str]:
     provider, api_key, model, endpoint = _resolve_llm_target(task="advisor")
     if not provider:
         return None, None, "disabled"
+    candidate_models = _candidate_models(provider=provider, primary_model=model, task="advisor")
     system_prompt = (
         "You are Sanjaya AI, a grounded academic advisor assistant. "
         "Rewrite ONLY the provided deterministic answer for clarity using ONLY the provided context. "
@@ -871,7 +980,7 @@ def _llm_compose_answer(
         "intent": intent,
         "question": request.question,
         "deterministic_answer": answer,
-        "plan_context": _plan_context_for_llm(plan),
+        "plan_context": _plan_context_for_llm(plan, catalog_course),
         "writing_rules": [
             "Rewrite only the answer text.",
             "Do not add facts beyond deterministic_answer and plan_context.",
@@ -889,8 +998,9 @@ def _llm_compose_answer(
         ],
         "temperature": 0.45,
         "max_tokens": 900,
-        "response_format": {"type": "json_object"},
     }
+    if provider != "gemini":
+        payload["response_format"] = {"type": "json_object"}
     raw = json.dumps(payload).encode("utf-8")
     req = urllib_request.Request(
         url=endpoint,
@@ -904,69 +1014,96 @@ def _llm_compose_answer(
     retries = 2
     transient_http_codes = {408, 409, 425, 429, 500, 502, 503, 504}
     last_error: str | None = None
+    for model_name in candidate_models:
+        payload["model"] = model_name
+        raw = json.dumps(payload).encode("utf-8")
+        req = urllib_request.Request(
+            url=endpoint,
+            data=raw,
+            method="POST",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+        )
 
-    for attempt in range(retries + 1):
-        try:
-            with urllib_request.urlopen(req, timeout=60) as response:
-                text = response.read().decode("utf-8")
-        except urllib_error.HTTPError as exc:
-            last_error = f"{provider}_http_{exc.code}"
-            if exc.code in transient_http_codes and attempt < retries:
-                time.sleep(1.2 * (attempt + 1))
-                continue
-            return None, last_error, "fallback"
-        except urllib_error.URLError:
-            last_error = f"{provider}_network_error"
-            if attempt < retries:
-                time.sleep(1.0 * (attempt + 1))
-                continue
-            return None, last_error, "fallback"
-        except TimeoutError:
-            last_error = f"{provider}_timeout"
-            if attempt < retries:
-                time.sleep(1.5 * (attempt + 1))
-                continue
-            return None, last_error, "fallback"
+        for attempt in range(retries + 1):
+            try:
+                with urllib_request.urlopen(req, timeout=60) as response:
+                    text = response.read().decode("utf-8")
+            except urllib_error.HTTPError as exc:
+                last_error = f"{provider}_http_{exc.code}_{model_name}"
+                if exc.code in transient_http_codes and attempt < retries:
+                    time.sleep(1.2 * (attempt + 1))
+                    continue
+                break
+            except urllib_error.URLError:
+                last_error = f"{provider}_network_error_{model_name}"
+                if attempt < retries:
+                    time.sleep(1.0 * (attempt + 1))
+                    continue
+                break
+            except TimeoutError:
+                last_error = f"{provider}_timeout_{model_name}"
+                if attempt < retries:
+                    time.sleep(1.5 * (attempt + 1))
+                    continue
+                break
 
-        try:
-            parsed = json.loads(text)
-            content = (
-                parsed.get("choices", [{}])[0]
-                .get("message", {})
-                .get("content", "")
-            )
-            out: dict | None = None
-            if isinstance(content, str):
-                try:
-                    candidate = json.loads(content)
-                    if isinstance(candidate, dict):
-                        out = candidate
-                except Exception:
-                    match = re.search(r"\{.*\}", content, flags=re.DOTALL)
-                    if match:
-                        candidate = json.loads(match.group(0))
+            try:
+                parsed = json.loads(text)
+                content = (
+                    parsed.get("choices", [{}])[0]
+                    .get("message", {})
+                    .get("content", "")
+                )
+                out: dict | None = None
+                if isinstance(content, str):
+                    try:
+                        candidate = json.loads(content)
                         if isinstance(candidate, dict):
                             out = candidate
+                    except Exception:
+                        match = re.search(r"\{.*\}", content, flags=re.DOTALL)
+                        if match:
+                            candidate = json.loads(match.group(0))
+                            if isinstance(candidate, dict):
+                                out = candidate
 
-            if isinstance(out, dict):
-                rewritten = out.get("answer")
-                if isinstance(rewritten, str) and rewritten.strip():
-                    return {"answer": rewritten.strip()}, None, "used"
-                last_error = f"{provider}_missing_answer"
+                if isinstance(out, dict):
+                    rewritten = out.get("answer")
+                    if isinstance(rewritten, str) and rewritten.strip():
+                        return {"answer": rewritten.strip()}, None, "used"
+                    last_error = f"{provider}_missing_answer_{model_name}"
+                    if attempt < retries:
+                        time.sleep(0.8 * (attempt + 1))
+                        continue
+                    break
+
+                last_error = f"{provider}_invalid_json_payload_{model_name}"
                 if attempt < retries:
                     time.sleep(0.8 * (attempt + 1))
                     continue
-                return None, last_error, "fallback"
-
-            last_error = f"{provider}_invalid_json_payload"
-            if attempt < retries:
-                time.sleep(0.8 * (attempt + 1))
-                continue
-            return None, last_error, "fallback"
-        except Exception:
-            last_error = f"{provider}_response_parse_failed"
-            if attempt < retries:
-                time.sleep(0.8 * (attempt + 1))
-                continue
-            return None, last_error, "fallback"
+                break
+            except Exception:
+                last_error = f"{provider}_response_parse_failed_{model_name}"
+                if attempt < retries:
+                    time.sleep(0.8 * (attempt + 1))
+                    continue
+                break
     return None, last_error or f"{provider}_unknown_error", "fallback"
+
+
+def _candidate_models(*, provider: str, primary_model: str, task: str) -> list[str]:
+    if provider != "gemini":
+        return [primary_model]
+    env_key = "GEMINI_MODEL_ADVISOR_FALLBACKS" if task == "advisor" else "GEMINI_MODEL_FALLBACKS"
+    raw = os.getenv(env_key, "").strip()
+    fallback_models = [item.strip() for item in raw.split(",") if item.strip()]
+    if not fallback_models:
+        fallback_models = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-flash-8b"]
+    out: list[str] = []
+    for model in [primary_model, *fallback_models]:
+        if model and model not in out:
+            out.append(model)
+    return out

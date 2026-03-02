@@ -7,11 +7,16 @@ export type RoleOption = {
   title: string;
   market_grounding?: "direct" | "composite";
   fusion_available?: boolean;
+  department_owner?: string;
+  demo_tier?: "core" | "fusion" | "extended";
 };
 
 export type StudentProfileInput = {
   level: ProgramLevel;
   mode: PlanMode;
+  goal_type: "select_role" | "type_role" | "explore";
+  confidence_level: "low" | "medium" | "high";
+  hours_per_week: number;
   fusion_domain?: string | null;
   current_semester: number;
   start_term: Term;
@@ -20,6 +25,7 @@ export type StudentProfileInput = {
   min_credits: number;
   target_credits: number;
   max_credits: number;
+  degree_total_credits: number | null;  /* required when submitting; may be absent in older API responses */
   interests: string[];
 };
 
@@ -89,11 +95,84 @@ export type FusionSummary = {
   readiness: FusionReadiness;
 };
 
+export type SalaryUSD = {
+  p25?: number | null;
+  median?: number | null;
+  p75?: number | null;
+  notes?: string | null;
+};
+
+export type RoleRealityUSA = {
+  role_id: string;
+  role_title: string;
+  typical_tasks: string[];
+  salary_usd: SalaryUSD;
+  sources: string[];
+  last_updated: string;
+};
+
+export type ProjectTemplateRef = {
+  template_id: string;
+  title: string;
+  level: "beginner" | "intermediate" | "advanced";
+  time_hours: number;
+  effort_fit: "fits" | "stretch" | "heavy";
+  deliverables: string[];
+};
+
+export type MissingSkillItem = {
+  skill_id: string;
+  skill_name: string;
+  reason: string;
+  recommended_projects: ProjectTemplateRef[];
+};
+
+export type CoveredSkillItem = {
+  skill_id: string;
+  skill_name: string;
+  matched_courses: string[];
+};
+
+export type GapReport = {
+  missing_skills: MissingSkillItem[];
+  covered_skills: CoveredSkillItem[];
+};
+
 export type CandidateRole = {
   role_id: string;
   role_title: string;
   score: number;
   reasons: string[];
+};
+
+export type ReadinessFactor = {
+  name: string;
+  value: number;
+  description: string;
+};
+
+export type ReadinessSummary = {
+  readiness_band: "Early" | "Developing" | "Market-Ready Track";
+  score: number;
+  factors: ReadinessFactor[];
+  unresolved_warning_count: number;
+  missing_skill_count: number;
+};
+
+export type DepartmentContext = {
+  primary_department: string;
+  supporting_departments: string[];
+};
+
+export type FusionPackSummary = {
+  fusion_pack_id: string;
+  title: string;
+  domain_a: string;
+  domain_b: string;
+  target_roles: string[];
+  unlock_skills: string[];
+  starter_projects: string[];
+  evidence_sources: string[];
 };
 
 export type PlanError = {
@@ -111,7 +190,8 @@ export type PlanError = {
     | "PREREQ_EXTERNAL_REF"
     | "PREREQ_COMPLEX_UNSUPPORTED"
     | "EVIDENCE_INTEGRITY_VIOLATION"
-    | "ROLE_REQUEST_UNRESOLVED";
+    | "ROLE_REQUEST_UNRESOLVED"
+    | "ROLE_REALITY_MISSING";
   message: string;
   course_id?: string | null;
   prereq_id?: string | null;
@@ -170,9 +250,92 @@ export type PlanResponse = {
   candidate_roles: CandidateRole[];
   evidence_panel?: EvidencePanelItem[];
   course_purpose_cards?: CoursePurposeCard[];
+  readiness_summary?: ReadinessSummary | null;
+  department_context?: DepartmentContext | null;
+  fusion_pack_summary?: FusionPackSummary | null;
+  role_reality?: RoleRealityUSA | null;
+  gap_report?: GapReport | null;
   fusion_summary?: FusionSummary | null;
+  intake_snapshot?: StudentProfileInput | null;
   agent_trace?: string[];
   node_timings?: NodeTiming[];
+};
+
+export type JobExtractResult = {
+  job_title?: string | null;
+  required_skills: string[];
+  preferred_skills: string[];
+  tools: string[];
+};
+
+export type MappedSkillItem = {
+  skill_id: string;
+  skill_name: string;
+  source: "required" | "preferred" | "tool";
+  match_confidence: number;
+  matched_by?: "name_overlap" | "synonym" | "substring" | null;
+  matched_on?: string | null;
+};
+
+export type UnmappedTerm = {
+  term: string;
+  source: "required" | "preferred" | "tool";
+};
+
+export type MappingSummary = {
+  mapped_count: number;
+  unmapped_count: number;
+  threshold_used: number;
+};
+
+export type JobSkillProjects = {
+  skill_id: string;
+  skill_name: string;
+  projects: ProjectTemplateRef[];
+};
+
+export type JobMatchRequest = {
+  text: string;
+  plan_id?: string | null;
+};
+
+export type JobMatchResponse = {
+  job_title?: string | null;
+  extracted: JobExtractResult;
+  mapped_skills: MappedSkillItem[];
+  unmapped_terms: UnmappedTerm[];
+  mapping_summary: MappingSummary;
+  covered_skill_ids: string[];
+  missing_skill_ids: string[];
+  out_of_scope_skill_ids: string[];
+  recommended_projects: JobSkillProjects[];
+  disclaimer: string;
+  llm_status: "used" | "fallback" | "disabled";
+  llm_error?: string | null;
+};
+
+export type StoryboardRequest = {
+  plan_id: string;
+  tone: "friendly" | "concise";
+  audience_level: "beginner" | "intermediate";
+};
+
+export type StoryboardCitation = {
+  kind: "source_id" | "evidence_id";
+  id: string;
+};
+
+export type StoryboardSection = {
+  title: string;
+  body: string;
+  citations: StoryboardCitation[];
+};
+
+export type StoryboardResponse = {
+  plan_id: string;
+  sections: StoryboardSection[];
+  llm_status: "used" | "fallback" | "disabled";
+  llm_error?: string | null;
 };
 
 export type ChatTurn = {
@@ -189,6 +352,9 @@ export type ChatRoleSuggestion = {
 export type ChatProfileDraft = {
   level: ProgramLevel;
   mode: PlanMode;
+  goal_type: "select_role" | "type_role" | "explore";
+  confidence_level: "low" | "medium" | "high";
+  hours_per_week: number;
   fusion_domain?: string | null;
   current_semester: number;
   start_term: Term;
@@ -224,6 +390,7 @@ export type AdvisorRequest = {
   plan_id?: string;
   plan?: PlanResponse;
   tone?: "friendly" | "concise";
+  course_id?: string;
 };
 
 export type AdvisorCitation = {

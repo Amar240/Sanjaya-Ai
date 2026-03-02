@@ -442,6 +442,40 @@ def _verify_credit_rules(
                 )
             )
 
+    degree_total = getattr(
+        request.student_profile, "degree_total_credits", None
+    )
+    if degree_total is not None:
+        plan_total = sum(sem.total_credits for sem in semesters)
+        if plan_total > degree_total:
+            errors.append(
+                PlanError(
+                    code="TOTAL_CREDITS_OVER_DEGREE",
+                    message=(
+                        f"Plan total is {plan_total:.0f} credits; degree allows {degree_total}."
+                    ),
+                    details={
+                        "severity": "error",
+                        "plan_total_credits": plan_total,
+                        "degree_total_credits": degree_total,
+                    },
+                )
+            )
+        elif plan_total < 0.8 * degree_total:
+            errors.append(
+                PlanError(
+                    code="TOTAL_CREDITS_UNDER_DEGREE",
+                    message=(
+                        f"Plan total is {plan_total:.0f} credits; degree typically requires {degree_total}."
+                    ),
+                    details={
+                        "severity": "warning",
+                        "plan_total_credits": plan_total,
+                        "degree_total_credits": degree_total,
+                    },
+                )
+            )
+
 
 def _verify_skill_coverage(
     role: RoleMarket,

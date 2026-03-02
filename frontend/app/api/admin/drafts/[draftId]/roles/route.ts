@@ -13,8 +13,9 @@ export async function GET(request: Request, { params }: Params): Promise<NextRes
     const url = new URL(request.url);
     const q = url.searchParams.get("q") ?? "";
     const page = url.searchParams.get("page") ?? "1";
+    const departmentOwner = url.searchParams.get("department_owner") ?? "";
     const response = await fetch(
-      `${BACKEND_URL}/admin/drafts/${encodeURIComponent(params.draftId)}/roles?q=${encodeURIComponent(q)}&page=${encodeURIComponent(page)}`,
+      `${BACKEND_URL}/admin/drafts/${encodeURIComponent(params.draftId)}/roles?q=${encodeURIComponent(q)}&department_owner=${encodeURIComponent(departmentOwner)}&page=${encodeURIComponent(page)}`,
       {
         method: "GET",
         headers: { "x-admin-token": ADMIN_TOKEN },

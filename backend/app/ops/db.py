@@ -165,6 +165,11 @@ def _run_migrations(conn: sqlite3.Connection) -> None:
           created_at TEXT,
           summary TEXT,
           source_occupation_codes_json TEXT,
+          department_owner TEXT,
+          country_scope TEXT,
+          demo_tier TEXT,
+          reality_complete INTEGER,
+          project_coverage_complete INTEGER,
           PRIMARY KEY (draft_id, role_id),
           FOREIGN KEY(draft_id) REFERENCES drafts(draft_id) ON DELETE CASCADE
         );
@@ -186,6 +191,24 @@ def _run_migrations(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_role_requests_count ON role_requests(count);
         """
     )
+    _ensure_column(conn, "draft_roles_calibrated", "department_owner", "TEXT")
+    _ensure_column(conn, "draft_roles_calibrated", "country_scope", "TEXT")
+    _ensure_column(conn, "draft_roles_calibrated", "demo_tier", "TEXT")
+    _ensure_column(conn, "draft_roles_calibrated", "reality_complete", "INTEGER")
+    _ensure_column(conn, "draft_roles_calibrated", "project_coverage_complete", "INTEGER")
+
+
+def _ensure_column(
+    conn: sqlite3.Connection,
+    table_name: str,
+    column_name: str,
+    column_type: str,
+) -> None:
+    rows = conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+    existing = {str(row[1]) for row in rows}
+    if column_name in existing:
+        return
+    conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}")
 
 
 def _json_dump(value: object) -> str:

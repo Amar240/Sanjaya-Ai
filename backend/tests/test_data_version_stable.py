@@ -87,6 +87,36 @@ def _seed_processed_dir(processed_dir) -> None:
             }
         ],
     )
+    _write_json(
+        processed_dir / "role_reality_usa.json",
+        [
+            {
+                "role_id": "ROLE_TEST",
+                "role_title": "Test Role",
+                "typical_tasks": ["Task A"],
+                "salary_usd": {"p25": 50000, "median": 70000, "p75": 90000},
+                "sources": ["SRC_TEST"],
+                "last_updated": "2026-01-01",
+            }
+        ],
+    )
+    _write_json(
+        processed_dir / "project_templates.json",
+        [
+            {
+                "template_id": "PT_TEST_1",
+                "skill_id": "SK_TEST",
+                "level": "beginner",
+                "title": "Template",
+                "time_hours": 4,
+                "prerequisites": [],
+                "deliverables": ["demo"],
+                "rubric": ["clear"],
+                "links": [],
+                "notes": None,
+            }
+        ],
+    )
 
 
 def test_data_version_stable_and_changes_on_file_update(tmp_path) -> None:

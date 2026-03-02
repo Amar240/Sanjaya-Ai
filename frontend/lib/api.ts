@@ -4,8 +4,12 @@ import type {
   ChatRequest,
   ChatResponse,
   InsightsSummary,
+  JobMatchRequest,
+  JobMatchResponse,
   PlanRequest,
   PlanResponse,
+  StoryboardRequest,
+  StoryboardResponse,
   RoleRequestItem,
   RoleOption
 } from "@/lib/types";
@@ -13,9 +17,19 @@ import type {
 async function parseJsonOrError(response: Response): Promise<unknown> {
   const payload = await response.json().catch(() => null);
   if (!response.ok) {
-    const detail =
+    const detailValue =
       payload && typeof payload === "object" && "detail" in payload
-        ? String((payload as { detail: unknown }).detail)
+        ? (payload as { detail: unknown }).detail
+        : null;
+    const detailText =
+      typeof detailValue === "string"
+        ? detailValue
+        : detailValue
+          ? JSON.stringify(detailValue)
+          : null;
+    const detail =
+      detailText
+        ? detailText
         : `Request failed with status ${response.status}`;
     throw new Error(detail);
   }
@@ -67,6 +81,32 @@ export async function askAdvisor(
   });
   const payload = await parseJsonOrError(response);
   return payload as AdvisorResponse;
+}
+
+export async function generateStoryboard(
+  input: StoryboardRequest
+): Promise<StoryboardResponse> {
+  const response = await fetch("/api/plan/storyboard", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(input)
+  });
+  const payload = await parseJsonOrError(response);
+  return payload as StoryboardResponse;
+}
+
+export async function matchJobPosting(input: JobMatchRequest): Promise<JobMatchResponse> {
+  const response = await fetch("/api/job/match", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(input),
+  });
+  const payload = await parseJsonOrError(response);
+  return payload as JobMatchResponse;
 }
 
 export async function fetchAdminInsights(window = "30d"): Promise<InsightsSummary> {

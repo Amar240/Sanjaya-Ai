@@ -4,7 +4,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from .plan import PlanRequest, ProgramLevel, Term
+from .plan import ConfidenceLevel, GoalType, PlanRequest, ProgramLevel, Term
 
 
 class ChatTurn(BaseModel):
@@ -16,6 +16,9 @@ class ChatTurn(BaseModel):
 class ChatProfileDraft(BaseModel):
     level: ProgramLevel = "UG"
     mode: Literal["CORE", "FUSION"] = "CORE"
+    goal_type: GoalType = "select_role"
+    confidence_level: ConfidenceLevel = "medium"
+    hours_per_week: int = Field(default=6, ge=0, le=40)
     fusion_domain: str | None = None
     current_semester: int = Field(default=1, ge=1, le=12)
     start_term: Term = "Fall"
@@ -24,6 +27,7 @@ class ChatProfileDraft(BaseModel):
     min_credits: int = Field(default=12, ge=0, le=30)
     target_credits: int = Field(default=15, ge=0, le=30)
     max_credits: int = Field(default=17, ge=0, le=30)
+    degree_total_credits: int | None = Field(default=None, ge=1, le=200)
     interests: list[str] = Field(default_factory=list)
     preferred_role_id: str | None = None
 

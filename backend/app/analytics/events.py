@@ -8,6 +8,7 @@ import re
 from typing import Literal
 
 from ..ops.db import connect, get_db_path, init_db, utc_now
+from ..schemas.plan import PlanRequest
 from ..schemas.plan import PlanResponse
 
 EventType = Literal[
@@ -93,7 +94,7 @@ def append_event(
     return payload
 
 
-def log_plan_created(plan: PlanResponse) -> dict:
+def log_plan_created(plan: PlanResponse, request: PlanRequest) -> dict:
     candidate_roles = [
         {"role_id": item.role_id, "score": float(item.score)}
         for item in (plan.candidate_roles or [])[:3]
@@ -106,6 +107,11 @@ def log_plan_created(plan: PlanResponse) -> dict:
         selected_role_id=plan.selected_role_id,
         candidate_roles=candidate_roles,
         error_codes=[error.code for error in (plan.validation_errors or [])],
+        notes={
+            "goal_type": request.student_profile.goal_type,
+            "confidence_level": request.student_profile.confidence_level,
+            "hours_per_week": int(request.student_profile.hours_per_week),
+        },
     )
 
 

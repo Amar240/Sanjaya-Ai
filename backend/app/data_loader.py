@@ -2,19 +2,21 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from .schemas.catalog import (
     Course,
     CourseSkillMapping,
     CuratedRoleSkillCourse,
+    FusionPack,
     FusionRoleProfile,
     RoleMarket,
     RoleSkillEvidence,
     SkillMarket,
     SourceReference,
 )
+from .schemas.reality import ProjectTemplate, RoleRealityUSA
 
 
 class DataValidationError(RuntimeError):
@@ -32,7 +34,10 @@ class CatalogStore:
     skills: list[SkillMarket]
     evidence_links: list[RoleSkillEvidence]
     sources: list[SourceReference]
-    warnings: list[str]
+    fusion_packs_usa: list[FusionPack] = field(default_factory=list)
+    role_reality_usa: list[RoleRealityUSA] = field(default_factory=list)
+    project_templates: list[ProjectTemplate] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
     data_version: str = ""
 
     @property
@@ -75,6 +80,12 @@ def load_catalog_store(data_dir: Path | None = None) -> CatalogStore:
         if fusion_path.exists()
         else []
     )
+    fusion_packs_path = processed / "fusion_packs_usa.json"
+    fusion_packs_usa = (
+        [FusionPack.model_validate(x) for x in _read_json(fusion_packs_path)]
+        if fusion_packs_path.exists()
+        else []
+    )
     roles = [RoleMarket.model_validate(x) for x in _read_json(roles_path)]
     skills = [SkillMarket.model_validate(x) for x in _read_json(processed / "skills_market.json")]
     evidence_links = [
@@ -83,6 +94,14 @@ def load_catalog_store(data_dir: Path | None = None) -> CatalogStore:
     ]
     sources = [
         SourceReference.model_validate(x) for x in _read_json(processed / "market_sources.json")
+    ]
+    role_reality_usa = [
+        RoleRealityUSA.model_validate(x)
+        for x in _read_json(processed / "role_reality_usa.json")
+    ]
+    project_templates = [
+        ProjectTemplate.model_validate(x)
+        for x in _read_json(processed / "project_templates.json")
     ]
 
     _validate_cross_references(
@@ -94,6 +113,9 @@ def load_catalog_store(data_dir: Path | None = None) -> CatalogStore:
         skills,
         evidence_links,
         sources,
+        fusion_packs_usa,
+        role_reality_usa,
+        project_templates,
     )
     warnings = _validate_course_prereqs(courses)
     if curated_role_skill_courses:
@@ -115,6 +137,9 @@ def load_catalog_store(data_dir: Path | None = None) -> CatalogStore:
         skills=skills,
         evidence_links=evidence_links,
         sources=sources,
+        fusion_packs_usa=fusion_packs_usa,
+        role_reality_usa=role_reality_usa,
+        project_templates=project_templates,
         warnings=warnings,
         data_version=data_version,
     )
@@ -129,6 +154,9 @@ def _validate_cross_references(
     skills: list[SkillMarket],
     evidence_links: list[RoleSkillEvidence],
     sources: list[SourceReference],
+    fusion_packs_usa: list[FusionPack],
+    role_reality_usa: list[RoleRealityUSA],
+    project_templates: list[ProjectTemplate],
 ) -> None:
     role_ids = {r.role_id for r in roles}
     skill_ids = {s.skill_id for s in skills}
@@ -216,6 +244,44 @@ def _validate_cross_references(
                     f"Evidence ({evidence.role_id}/{evidence.skill_id}) missing source '{source_id}'."
                 )
 
+    for reality in role_reality_usa:
+        if reality.role_id not in role_ids:
+            errors.append(f"Role reality references missing role '{reality.role_id}'.")
+        for source_id in reality.sources:
+            if source_id not in source_ids:
+                errors.append(
+                    f"Role reality '{reality.role_id}' references missing source '{source_id}'."
+                )
+
+    for template in project_templates:
+        if template.skill_id not in skill_ids:
+            errors.append(
+                f"Project template '{template.template_id}' references missing skill '{template.skill_id}'."
+            )
+
+    template_ids = {item.template_id for item in project_templates}
+    for pack in fusion_packs_usa:
+        for role_id in pack.target_roles:
+            if role_id not in role_ids:
+                errors.append(
+                    f"Fusion pack '{pack.fusion_pack_id}' references missing role '{role_id}'."
+                )
+        for skill_id in pack.unlock_skills:
+            if skill_id not in skill_ids:
+                errors.append(
+                    f"Fusion pack '{pack.fusion_pack_id}' references missing skill '{skill_id}'."
+                )
+        for template_id in pack.starter_projects:
+            if template_id not in template_ids:
+                errors.append(
+                    f"Fusion pack '{pack.fusion_pack_id}' references missing project template '{template_id}'."
+                )
+        for source_id in pack.evidence_sources:
+            if source_id not in source_ids:
+                errors.append(
+                    f"Fusion pack '{pack.fusion_pack_id}' references missing source '{source_id}'."
+                )
+
     if errors:
         msg = "Market data integrity check failed:\n- " + "\n- ".join(errors)
         raise DataValidationError(msg)
@@ -249,10 +315,13 @@ def _resolve_data_files(processed: Path) -> tuple[list[Path], Path]:
         processed / "skills_market.json",
         processed / "role_skill_evidence.json",
         processed / "market_sources.json",
+        processed / "role_reality_usa.json",
+        processed / "project_templates.json",
     ]
     optional_files = [
         processed / "course_skills_curated.json",
         processed / "fusion_roles.json",
+        processed / "fusion_packs_usa.json",
     ]
     for path in optional_files:
         if path.exists():

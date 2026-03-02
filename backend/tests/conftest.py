@@ -17,6 +17,7 @@ from app.schemas.catalog import (
     SkillMarket,
     SourceReference,
 )
+from app.schemas.reality import ProjectTemplate, RoleRealityUSA
 
 
 def _course(
@@ -116,6 +117,32 @@ def sample_store() -> CatalogStore:
         skills=skills,
         evidence_links=evidence,
         sources=sources,
+        role_reality_usa=[
+            RoleRealityUSA.model_validate(
+                {
+                    "role_id": "ROLE_TEST",
+                    "role_title": "Test Role",
+                    "typical_tasks": ["Design small systems", "Review data pipelines"],
+                    "salary_usd": {"p25": 70000, "median": 90000, "p75": 120000},
+                    "sources": ["SRC_TEST"],
+                    "last_updated": "2026-01-15",
+                }
+            )
+        ],
+        project_templates=[
+            ProjectTemplate.model_validate(
+                {
+                    "template_id": "PT_SK_TEST_1",
+                    "skill_id": "SK_TEST",
+                    "level": "beginner",
+                    "title": "Test Skill Project",
+                    "time_hours": 10,
+                    "deliverables": ["Repo with README"],
+                    "rubric": ["Clear scope", "Working demo"],
+                    "links": [],
+                }
+            )
+        ],
         warnings=[],
     )
 

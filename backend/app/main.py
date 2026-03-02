@@ -2,6 +2,10 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 import logging
+from pathlib import Path
+
+from dotenv import load_dotenv
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel, Field
@@ -16,6 +20,9 @@ from .analytics.role_requests import (
 )
 from .agents.advisor_agent import answer_advisor_question
 from .agents.chat_workflow import run_chat_workflow
+from .agents.job_extractor import extract_job_skills
+from .agents.job_matcher import build_job_match_response, match_extracted_to_skills
+from .agents.storyboard import build_storyboard
 from .agents.workflow import (
     get_retriever_for_store,
     reset_plan_cache,
@@ -26,18 +33,33 @@ from .curation.roles_drafts import (
     create_role_in_draft,
     create_role_stub_from_request,
     delete_role_in_draft,
+    get_draft_role_readiness_status,
+    is_central_reviewer,
     list_draft_roles,
     publish_draft_roles,
     update_role_in_draft,
 )
 from .data_loader import CatalogStore, DataValidationError, load_catalog_store
+from .integration.myud import (
+    build_myud_launch_response,
+    build_myud_summary_response,
+    build_plan_request_from_myud,
+    validate_myud_signature,
+)
 from .ops.db import init_db as init_ops_db
 from .ops.db import insert_audit_log
 from .plan_store import get_plan_store, reset_plan_store
 from .schemas.advisor import AdvisorRequest, AdvisorResponse
 from .schemas.chat import ChatRequest, ChatResponse
 from .schemas.health import ChromaHealth, HealthCounts, HealthResponse
+from .schemas.integration import (
+    MyUDLaunchRequest,
+    MyUDLaunchResponse,
+    MyUDPlanSummaryResponse,
+)
+from .schemas.job_match import JobMatchRequest, JobMatchResponse
 from .schemas.plan import PlanRequest, PlanResponse
+from .schemas.storyboard import StoryboardRequest, StoryboardResponse
 
 catalog_store: CatalogStore | None = None
 catalog_retriever = None
@@ -63,6 +85,20 @@ class DraftRoleBody(BaseModel):
     source_occupation_codes: list[dict] = Field(default_factory=list)
     required_skills: list[dict] = Field(default_factory=list)
     evidence_sources: list[str] = Field(default_factory=list)
+    department_owner: str | None = None
+    country_scope: str | None = None
+    demo_tier: str | None = None
+    reality_complete: bool | None = None
+    project_coverage_complete: bool | None = None
+
+
+class CatalogCourseResponse(BaseModel):
+    """Course details for catalog/course Q&A (description, source link)."""
+
+    course_id: str
+    title: str
+    description: str
+    source_url: str
 
 
 @asynccontextmanager
@@ -137,9 +173,27 @@ def roles() -> list[dict]:
             "title": role.title,
             "market_grounding": role.market_grounding,
             "fusion_available": role.role_id in fusion_role_ids,
+            "department_owner": role.department_owner,
+            "demo_tier": role.demo_tier,
         }
         for role in catalog_store.roles
     ]
+
+
+@app.get("/catalog/course/{course_id}", response_model=CatalogCourseResponse)
+def get_catalog_course(course_id: str) -> CatalogCourseResponse:
+    """Return course details (title, description, source_url) for Course Q&A dialog."""
+    if not catalog_store:
+        raise HTTPException(status_code=503, detail=startup_error or "Data store unavailable")
+    course = catalog_store.courses_by_id.get(course_id)
+    if course is None:
+        raise HTTPException(status_code=404, detail="Course not found")
+    return CatalogCourseResponse(
+        course_id=course.course_id,
+        title=course.title,
+        description=course.description or "",
+        source_url=str(course.source_url),
+    )
 
 
 @app.post("/plan", response_model=PlanResponse)
@@ -183,6 +237,51 @@ def advisor_ask(request: AdvisorRequest) -> AdvisorResponse:
     )
     _log_advisor_event(request=request, response=response)
     return response
+
+
+@app.post("/plan/storyboard", response_model=StoryboardResponse)
+def plan_storyboard(request: StoryboardRequest) -> StoryboardResponse:
+    if not catalog_store:
+        raise HTTPException(status_code=503, detail=startup_error or "Data store unavailable")
+    resolved_plan = get_plan_store().get(request.plan_id)
+    if resolved_plan is None:
+        raise HTTPException(status_code=404, detail="Unknown plan_id")
+    return build_storyboard(
+        request=request,
+        plan=resolved_plan,
+        store=catalog_store,
+    )
+
+
+@app.post("/job/match", response_model=JobMatchResponse)
+def job_match(request: JobMatchRequest) -> JobMatchResponse:
+    if not catalog_store:
+        raise HTTPException(status_code=503, detail=startup_error or "Data store unavailable")
+
+    resolved_plan = None
+    if request.plan_id:
+        resolved_plan = get_plan_store().get(request.plan_id)
+        if resolved_plan is None:
+            raise HTTPException(status_code=404, detail="Unknown plan_id")
+
+    extracted, llm_status, llm_error = extract_job_skills(
+        request.text,
+        store=catalog_store,
+    )
+    mapped, unmapped, mapping_summary = match_extracted_to_skills(
+        extracted,
+        catalog_store,
+    )
+    return build_job_match_response(
+        extracted=extracted,
+        mapped_skills=mapped,
+        unmapped_terms=unmapped,
+        mapping_summary=mapping_summary,
+        store=catalog_store,
+        plan=resolved_plan,
+        llm_status=llm_status,
+        llm_error=llm_error,
+    )
 
 
 @app.get("/admin/insights/summary")
@@ -312,13 +411,27 @@ def admin_create_draft(
 def admin_list_draft_roles(
     draft_id: str,
     q: str | None = None,
+    department_owner: str | None = None,
     page: int = 1,
     _: str = Depends(require_admin),
 ) -> dict:
     try:
-        return list_draft_roles(draft_id, query=q, page=page)
+        return list_draft_roles(draft_id, query=q, department_owner=department_owner, page=page)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/admin/drafts/{draft_id}/roles/readiness")
+def admin_draft_role_readiness(
+    draft_id: str,
+    department_owner: str | None = None,
+    _: str = Depends(require_admin),
+) -> dict:
+    try:
+        rows = get_draft_role_readiness_status(draft_id, department_owner=department_owner)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"items": rows}
 
 
 @app.post("/admin/drafts/{draft_id}/roles")
@@ -376,13 +489,16 @@ def admin_delete_draft_role(
     draft_id: str,
     role_id: str,
     _: str = Depends(require_admin),
+    username: str = Depends(admin_username),
 ) -> dict:
     try:
-        delete_role_in_draft(draft_id, role_id)
+        delete_role_in_draft(draft_id, role_id, username=username)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=f"role_id not found: {exc.args[0]}") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     return {"deleted": True, "role_id": role_id}
 
 
@@ -390,13 +506,21 @@ def admin_delete_draft_role(
 def admin_publish_draft(
     draft_id: str,
     _: str = Depends(require_admin),
+    username: str = Depends(admin_username),
 ) -> dict:
     global catalog_store
     global catalog_retriever
+    if not is_central_reviewer(username):
+        raise HTTPException(
+            status_code=403,
+            detail="Only central reviewer can publish drafts.",
+        )
     try:
-        result = publish_draft_roles(draft_id)
+        result = publish_draft_roles(draft_id, reviewer=username)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     # refresh runtime state atomically for subsequent requests
     catalog_store = load_catalog_store()
@@ -405,6 +529,28 @@ def admin_publish_draft(
     reset_plan_store()
     result["data_version"] = catalog_store.data_version
     return result
+
+
+@app.post("/integration/myud/launch", response_model=MyUDLaunchResponse)
+def integration_myud_launch(
+    request: MyUDLaunchRequest,
+    x_myud_signature: str | None = None,
+) -> MyUDLaunchResponse:
+    if not catalog_store:
+        raise HTTPException(status_code=503, detail=startup_error or "Data store unavailable")
+    if not validate_myud_signature(payload=request, signature=x_myud_signature):
+        raise HTTPException(status_code=401, detail="Invalid My UD signature")
+    plan_request = build_plan_request_from_myud(request)
+    plan = run_plan_workflow(plan_request, catalog_store)
+    return build_myud_launch_response(plan)
+
+
+@app.get("/integration/myud/plan/{plan_id}/summary", response_model=MyUDPlanSummaryResponse)
+def integration_myud_plan_summary(plan_id: str) -> MyUDPlanSummaryResponse:
+    plan = get_plan_store().get(plan_id)
+    if plan is None:
+        raise HTTPException(status_code=404, detail="Unknown plan_id")
+    return build_myud_summary_response(plan)
 
 
 def _startup_validation_entries(error: str | None) -> list[str]:

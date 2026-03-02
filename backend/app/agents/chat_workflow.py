@@ -289,6 +289,7 @@ def _llm_extract_profile(
         "min_credits": "int|null",
         "target_credits": "int|null",
         "max_credits": "int|null",
+        "degree_total_credits": "int|null",
         "interests": ["string"],
         "completed_courses": ["COURSE-ID"],
         "preferred_role_id": "ROLE_ID|null",
@@ -504,6 +505,10 @@ def _merge_profile_payload(
         if isinstance(value, int) and 0 <= value <= 30:
             setattr(profile, field_name, value)
 
+    degree_total = payload.get("degree_total_credits")
+    if isinstance(degree_total, int) and 1 <= degree_total <= 200:
+        profile.degree_total_credits = degree_total
+
     interests = payload.get("interests")
     if isinstance(interests, list):
         cleaned = [
@@ -611,6 +616,9 @@ def _build_plan_draft(profile: ChatProfileDraft) -> PlanRequest | None:
             student_profile=StudentProfile(
                 level=profile.level,
                 mode=profile.mode,
+                goal_type=profile.goal_type,
+                confidence_level=profile.confidence_level,
+                hours_per_week=profile.hours_per_week,
                 fusion_domain=profile.fusion_domain,
                 current_semester=profile.current_semester,
                 start_term=profile.start_term,
@@ -619,6 +627,7 @@ def _build_plan_draft(profile: ChatProfileDraft) -> PlanRequest | None:
                 min_credits=profile.min_credits,
                 target_credits=profile.target_credits,
                 max_credits=profile.max_credits,
+                degree_total_credits=profile.degree_total_credits,
                 interests=list(profile.interests),
             ),
             preferred_role_id=profile.preferred_role_id,
@@ -748,12 +757,18 @@ def _resolve_llm_target(task: str) -> tuple[str | None, str, str, str]:
     provider_pref = os.getenv("LLM_PROVIDER", "auto").strip().lower()
     openai_key = os.getenv("OPENAI_API_KEY", "").strip()
     groq_key = os.getenv("GROQ_API_KEY", "").strip()
+    gemini_key = os.getenv("GEMINI_API_KEY", "").strip()
 
     if task == "chat":
         openai_model = (
             os.getenv("OPENAI_MODEL_CHAT", "").strip()
             or os.getenv("OPENAI_MODEL", "").strip()
             or "gpt-4o-mini"
+        )
+        gemini_model = (
+            os.getenv("GEMINI_MODEL_CHAT", "").strip()
+            or os.getenv("GEMINI_MODEL", "").strip()
+            or "gemini-2.0-flash"
         )
         groq_model = (
             os.getenv("GROQ_MODEL_CHAT", "").strip()
@@ -764,6 +779,10 @@ def _resolve_llm_target(task: str) -> tuple[str | None, str, str, str]:
         openai_model = (
             os.getenv("OPENAI_MODEL", "").strip()
             or "gpt-4o-mini"
+        )
+        gemini_model = (
+            os.getenv("GEMINI_MODEL", "").strip()
+            or "gemini-2.0-flash"
         )
         groq_model = (
             os.getenv("GROQ_MODEL", "").strip()
@@ -778,9 +797,25 @@ def _resolve_llm_target(task: str) -> tuple[str | None, str, str, str]:
         if groq_key:
             return "groq", groq_key, groq_model, "https://api.groq.com/openai/v1/chat/completions"
         return None, "", "", ""
+    if provider_pref == "gemini":
+        if gemini_key:
+            return (
+                "gemini",
+                gemini_key,
+                gemini_model,
+                "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+            )
+        return None, "", "", ""
 
     if openai_key:
         return "openai", openai_key, openai_model, "https://api.openai.com/v1/chat/completions"
+    if gemini_key:
+        return (
+            "gemini",
+            gemini_key,
+            gemini_model,
+            "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+        )
     if groq_key:
         return "groq", groq_key, groq_model, "https://api.groq.com/openai/v1/chat/completions"
     return None, "", "", ""
@@ -801,7 +836,7 @@ def _llm_chat_completion(
         "temperature": 0.2,
         "max_tokens": 700,
     }
-    if json_mode:
+    if json_mode and provider != "gemini":
         payload["response_format"] = {"type": "json_object"}
 
     raw = json.dumps(payload).encode("utf-8")

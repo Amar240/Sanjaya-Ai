@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import hashlib
 import json
+import os
 import re
 from pathlib import Path
 import shutil
@@ -121,8 +122,9 @@ def create_draft(*, draft_id: str | None = None, created_by: str = "advisor") ->
                 """
                 INSERT INTO draft_roles_calibrated(
                     draft_id, role_id, title, market, required_skills_json, evidence_sources_json,
-                    role_origin, created_by, created_at, summary, source_occupation_codes_json
-                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    role_origin, created_by, created_at, summary, source_occupation_codes_json,
+                    department_owner, country_scope, demo_tier, reality_complete, project_coverage_complete
+                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     draft_id,
@@ -136,6 +138,11 @@ def create_draft(*, draft_id: str | None = None, created_by: str = "advisor") ->
                     str(row.get("created_at") or ""),
                     str(row.get("summary") or ""),
                     _json_dump(row.get("source_occupation_codes") or []),
+                    str(row.get("department_owner") or ""),
+                    str(row.get("country_scope") or "USA"),
+                    str(row.get("demo_tier") or "extended"),
+                    int(bool(row.get("reality_complete", False))),
+                    int(bool(row.get("project_coverage_complete", False))),
                 ),
             )
 
@@ -158,7 +165,8 @@ def load_draft_roles(draft_id: str) -> list[dict]:
         rows = conn.execute(
             """
             SELECT role_id, title, market, required_skills_json, evidence_sources_json,
-                   role_origin, created_by, created_at, summary, source_occupation_codes_json
+                   role_origin, created_by, created_at, summary, source_occupation_codes_json,
+                   department_owner, country_scope, demo_tier, reality_complete, project_coverage_complete
             FROM draft_roles_calibrated
             WHERE draft_id = ?
             ORDER BY role_id ASC
@@ -183,8 +191,9 @@ def save_draft_roles(draft_id: str, roles: list[dict]) -> None:
                 """
                 INSERT INTO draft_roles_calibrated(
                     draft_id, role_id, title, market, required_skills_json, evidence_sources_json,
-                    role_origin, created_by, created_at, summary, source_occupation_codes_json
-                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    role_origin, created_by, created_at, summary, source_occupation_codes_json,
+                    department_owner, country_scope, demo_tier, reality_complete, project_coverage_complete
+                ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     draft_id,
@@ -198,6 +207,11 @@ def save_draft_roles(draft_id: str, roles: list[dict]) -> None:
                     role.get("created_at") or "",
                     role.get("summary") or "",
                     _json_dump(role.get("source_occupation_codes") or []),
+                    role.get("department_owner") or "",
+                    role.get("country_scope") or "USA",
+                    role.get("demo_tier") or "extended",
+                    int(bool(role.get("reality_complete", False))),
+                    int(bool(role.get("project_coverage_complete", False))),
                 ),
             )
         conn.commit()
@@ -208,6 +222,7 @@ def list_draft_roles(
     draft_id: str,
     *,
     query: str | None = None,
+    department_owner: str | None = None,
     page: int = 1,
     page_size: int = 25,
 ) -> dict:
@@ -219,6 +234,9 @@ def list_draft_roles(
             for role in roles
             if q in str(role.get("role_id", "")).lower() or q in str(role.get("title", "")).lower()
         ]
+    dept = (department_owner or "").strip().upper()
+    if dept:
+        roles = [role for role in roles if str(role.get("department_owner") or "").upper() == dept]
     roles.sort(key=lambda item: str(item.get("role_id", "")))
     page = max(1, page)
     page_size = max(1, min(100, page_size))
@@ -241,6 +259,10 @@ def create_role_in_draft(
 ) -> dict:
     roles = load_draft_roles(draft_id)
     role = normalize_role_payload(payload, username=username, store=store, existing_role=None)
+    if not can_edit_department(username=username, department_owner=str(role.get("department_owner") or "")):
+        raise ValueError(
+            f"User '{username}' is not allowed to edit department '{role.get('department_owner')}'."
+        )
     if any(str(item.get("role_id")) == role["role_id"] for item in roles):
         raise ValueError(f"role_id already exists in draft: {role['role_id']}")
     roles.append(role)
@@ -269,6 +291,13 @@ def update_role_in_draft(
     target = next((item for item in roles if str(item.get("role_id")) == role_id), None)
     if target is None:
         raise KeyError(role_id)
+    if not can_edit_department(
+        username=username,
+        department_owner=str(target.get("department_owner") or ""),
+    ):
+        raise ValueError(
+            f"User '{username}' is not allowed to edit department '{target.get('department_owner')}'."
+        )
     updated_payload = dict(target)
     updated_payload.update(payload)
     updated = normalize_role_payload(
@@ -297,15 +326,22 @@ def update_role_in_draft(
     return updated
 
 
-def delete_role_in_draft(draft_id: str, role_id: str) -> None:
+def delete_role_in_draft(draft_id: str, role_id: str, *, username: str = "advisor") -> None:
     roles = load_draft_roles(draft_id)
     target = next((item for item in roles if str(item.get("role_id")) == role_id), None)
+    if target and not can_edit_department(
+        username=username,
+        department_owner=str(target.get("department_owner") or ""),
+    ):
+        raise ValueError(
+            f"User '{username}' is not allowed to edit department '{target.get('department_owner')}'."
+        )
     filtered = [item for item in roles if str(item.get("role_id")) != role_id]
     if len(filtered) == len(roles):
         raise KeyError(role_id)
     save_draft_roles(draft_id, filtered)
     insert_audit_log(
-        user="advisor",
+        user=username,
         action="draft_role_delete",
         entity="draft_roles_calibrated",
         draft_id=draft_id,
@@ -314,7 +350,7 @@ def delete_role_in_draft(draft_id: str, role_id: str) -> None:
     )
 
 
-def publish_draft_roles(draft_id: str) -> dict:
+def publish_draft_roles(draft_id: str, *, reviewer: str | None = None) -> dict:
     init_db()
     with connect() as conn:
         draft = conn.execute(
@@ -344,7 +380,8 @@ def publish_draft_roles(draft_id: str) -> dict:
         role_rows = conn.execute(
             """
             SELECT role_id, title, market, required_skills_json, evidence_sources_json, role_origin,
-                   created_by, created_at, summary, source_occupation_codes_json
+                   created_by, created_at, summary, source_occupation_codes_json,
+                   department_owner, country_scope, demo_tier, reality_complete, project_coverage_complete
             FROM draft_roles_calibrated
             WHERE draft_id = ?
             ORDER BY role_id
@@ -377,6 +414,38 @@ def publish_draft_roles(draft_id: str) -> dict:
         sources_json.append(item)
 
     roles_json = [_row_to_role(row) for row in role_rows]
+    readiness_rows = compute_role_readiness_status(
+        roles_rows=roles_json,
+        sources_rows=sources_json,
+        role_reality_rows=_load_processed_json("role_reality_usa.json", default=[]),
+        project_template_rows=_load_processed_json("project_templates.json", default=[]),
+    )
+    readiness_by_role = {row["role_id"]: row for row in readiness_rows}
+    blocking = [
+        row
+        for row in readiness_rows
+        if row.get("demo_tier") in {"core", "fusion"} and (
+            not row.get("gate1_required_skills_evidence_ok", False)
+            or not row.get("gate2_role_reality_ok", False)
+            or not row.get("gate3_project_coverage_ok", False)
+        )
+    ]
+    if blocking:
+        details = "; ".join(
+            f"{row['role_id']}: gates="
+            f"{int(row['gate1_required_skills_evidence_ok'])}/"
+            f"{int(row['gate2_role_reality_ok'])}/"
+            f"{int(row['gate3_project_coverage_ok'])}"
+            for row in blocking[:10]
+        )
+        raise ValueError(
+            "Draft publish blocked by readiness gates for demo-tier roles. " + details
+        )
+    for role in roles_json:
+        ready = readiness_by_role.get(role["role_id"])
+        if ready:
+            role["reality_complete"] = bool(ready["gate2_role_reality_ok"])
+            role["project_coverage_complete"] = bool(ready["gate3_project_coverage_ok"])
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     snapshot_dir = history_root() / f"{timestamp}_{draft_id}"
     snapshot_dir.mkdir(parents=True, exist_ok=True)
@@ -397,7 +466,7 @@ def publish_draft_roles(draft_id: str) -> dict:
         conn.commit()
 
     insert_audit_log(
-        user=str(draft["created_by"]),
+        user=reviewer or str(draft["created_by"]),
         action="draft_publish",
         entity="draft",
         draft_id=draft_id,
@@ -408,6 +477,7 @@ def publish_draft_roles(draft_id: str) -> dict:
         "published_file": str(roles_calibrated_processed_path()),
         "history_snapshot_dir": str(snapshot_dir),
         "reload_required": True,
+        "readiness_roles_checked": len(readiness_rows),
     }
 
 
@@ -498,14 +568,30 @@ def normalize_role_payload(
     created_at = str(payload.get("created_at") or "")
     created_by = str(payload.get("created_by") or "")
     role_origin = str(payload.get("role_origin") or "")
+    department_owner = str(payload.get("department_owner") or "").strip().upper()
+    country_scope = str(payload.get("country_scope") or "USA").strip().upper() or "USA"
+    demo_tier = str(payload.get("demo_tier") or "extended").strip().lower() or "extended"
+    if demo_tier not in {"core", "fusion", "extended"}:
+        raise ValueError("demo_tier must be one of: core, fusion, extended.")
+    reality_complete = bool(payload.get("reality_complete", False))
+    project_coverage_complete = bool(payload.get("project_coverage_complete", False))
     if existing_role is None:
         created_at = utc_now()
         created_by = username
         role_origin = "advisor_added"
+        if not department_owner:
+            department_owner = "EXTENDED"
     else:
         created_at = created_at or str(existing_role.get("created_at") or "")
         created_by = created_by or str(existing_role.get("created_by") or username)
         role_origin = role_origin or str(existing_role.get("role_origin") or "advisor_added")
+        department_owner = department_owner or str(existing_role.get("department_owner") or "EXTENDED")
+        country_scope = country_scope or str(existing_role.get("country_scope") or "USA")
+        demo_tier = demo_tier or str(existing_role.get("demo_tier") or "extended")
+        reality_complete = bool(payload.get("reality_complete", existing_role.get("reality_complete", False)))
+        project_coverage_complete = bool(
+            payload.get("project_coverage_complete", existing_role.get("project_coverage_complete", False))
+        )
 
     return {
         "role_id": role_id,
@@ -518,6 +604,11 @@ def normalize_role_payload(
         "role_origin": role_origin,
         "created_by": created_by,
         "created_at": created_at,
+        "department_owner": department_owner,
+        "country_scope": country_scope,
+        "demo_tier": demo_tier,
+        "reality_complete": reality_complete,
+        "project_coverage_complete": project_coverage_complete,
     }
 
 
@@ -538,6 +629,120 @@ def default_evidence_sources(store: CatalogStore) -> list[str]:
     if not selected and source_scores:
         selected = [source_scores[0][1]]
     return selected
+
+
+def compute_role_readiness_status(
+    *,
+    roles_rows: list[dict],
+    sources_rows: list[dict],
+    role_reality_rows: list[dict],
+    project_template_rows: list[dict],
+) -> list[dict]:
+    source_ids = {
+        str(row.get("source_id", "")).strip()
+        for row in sources_rows
+        if isinstance(row, dict)
+    }
+    role_reality_by_id = {
+        str(row.get("role_id", "")).strip(): row
+        for row in role_reality_rows
+        if isinstance(row, dict)
+    }
+    template_skill_ids = {
+        str(row.get("skill_id", "")).strip()
+        for row in project_template_rows
+        if isinstance(row, dict)
+    }
+
+    out: list[dict] = []
+    for role in roles_rows:
+        role_id = str(role.get("role_id", "")).strip()
+        required_skills = [
+            str(item.get("skill_id", "")).strip()
+            for item in (role.get("required_skills") or [])
+            if isinstance(item, dict)
+        ]
+        required_skills = [item for item in required_skills if item]
+        evidence_sources = [
+            str(item).strip() for item in (role.get("evidence_sources") or []) if str(item).strip()
+        ]
+
+        gate1_required_skills_evidence_ok = bool(required_skills) and bool(evidence_sources) and all(
+            source_id in source_ids for source_id in evidence_sources
+        )
+
+        reality = role_reality_by_id.get(role_id)
+        gate2_role_reality_ok = False
+        if isinstance(reality, dict):
+            reality_sources = [str(item).strip() for item in (reality.get("sources") or []) if str(item).strip()]
+            gate2_role_reality_ok = bool(reality_sources) and all(
+                source_id in source_ids for source_id in reality_sources
+            )
+
+        missing_project_skills = sorted(
+            skill_id for skill_id in required_skills if skill_id not in template_skill_ids
+        )
+        gate3_project_coverage_ok = len(missing_project_skills) == 0
+
+        out.append(
+            {
+                "role_id": role_id,
+                "department_owner": str(role.get("department_owner") or ""),
+                "country_scope": str(role.get("country_scope") or "USA"),
+                "demo_tier": str(role.get("demo_tier") or "extended"),
+                "gate1_required_skills_evidence_ok": gate1_required_skills_evidence_ok,
+                "gate2_role_reality_ok": gate2_role_reality_ok,
+                "gate3_project_coverage_ok": gate3_project_coverage_ok,
+                "missing_project_skills": missing_project_skills,
+            }
+        )
+    out.sort(key=lambda row: row["role_id"])
+    return out
+
+
+def get_draft_role_readiness_status(
+    draft_id: str,
+    *,
+    department_owner: str | None = None,
+) -> list[dict]:
+    roles = load_draft_roles(draft_id)
+    if department_owner:
+        dept = department_owner.strip().upper()
+        roles = [row for row in roles if str(row.get("department_owner") or "").upper() == dept]
+    return compute_role_readiness_status(
+        roles_rows=roles,
+        sources_rows=_load_processed_json("market_sources.json", default=[]),
+        role_reality_rows=_load_processed_json("role_reality_usa.json", default=[]),
+        project_template_rows=_load_processed_json("project_templates.json", default=[]),
+    )
+
+
+def is_central_reviewer(username: str) -> bool:
+    raw = (os.getenv("SANJAYA_CENTRAL_REVIEWERS", "").strip() or "advisor")
+    allowed = {item.strip().lower() for item in raw.split(",") if item.strip()}
+    return username.strip().lower() in allowed
+
+
+def can_edit_department(*, username: str, department_owner: str) -> bool:
+    if is_central_reviewer(username):
+        return True
+    mapping_raw = os.getenv("SANJAYA_DEPARTMENT_STEWARDS_JSON", "").strip()
+    if not mapping_raw:
+        return True
+    try:
+        mapping = json.loads(mapping_raw)
+    except json.JSONDecodeError:
+        return True
+    if not isinstance(mapping, dict):
+        return True
+    dept = department_owner.strip().upper()
+    if not dept:
+        return False
+    users = mapping.get(dept) or []
+    if not isinstance(users, list):
+        return False
+    allowed = {str(item).strip().lower() for item in users if str(item).strip()}
+    return username.strip().lower() in allowed
 
 
 def _new_draft_id() -> str:
@@ -591,6 +796,11 @@ def _row_to_role(row) -> dict:
         "role_origin": row["role_origin"] or "",
         "created_by": row["created_by"] or "",
         "created_at": row["created_at"] or "",
+        "department_owner": row["department_owner"] or "",
+        "country_scope": row["country_scope"] or "USA",
+        "demo_tier": row["demo_tier"] or "extended",
+        "reality_complete": bool(row["reality_complete"]) if row["reality_complete"] is not None else False,
+        "project_coverage_complete": bool(row["project_coverage_complete"]) if row["project_coverage_complete"] is not None else False,
     }
 
 

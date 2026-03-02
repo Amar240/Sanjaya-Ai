@@ -14,10 +14,14 @@ FastAPI backend with:
 
 ## Run
 
+Requirements:
+- Python 3.10+
+- Dependencies from `requirements.txt`
+
 ```powershell
 cd backend
 python -m pip install -r requirements.txt
-uvicorn app.main:app --reload
+uvicorn app.main:app --reload --port 8000
 ```
 
 ## Quick checks
@@ -45,7 +49,7 @@ curl -X POST http://127.0.0.1:8000/advisor/ask `
   -d "{""question"":""Why this role for me?"",""tone"":""friendly"",""plan"":{...plan response json...}}"
 ```
 
-## Optional LLM (Groq)
+## LLM (Groq)
 
 Set environment variables before starting backend if you want LLM-powered conversational extraction:
 
@@ -70,7 +74,7 @@ You can switch provider without code changes:
 ```powershell
 $env:LLM_PROVIDER="openai"
 $env:OPENAI_API_KEY="your_openai_key_here"
-$env:OPENAI_MODEL="gpt-4o-mini"
+$env:OPENAI_MODEL="gpt-4.1"
 ```
 
 Optional split by task:
@@ -83,7 +87,36 @@ $env:OPENAI_MODEL_ADVISOR="gpt-4o-mini"
 Provider selection behavior:
 - `LLM_PROVIDER=openai` -> use OpenAI key/models
 - `LLM_PROVIDER=groq` -> use Groq key/models
+- `LLM_PROVIDER=gemini` -> use Gemini key/models (OpenAI-compatible endpoint)
 - `LLM_PROVIDER=auto` (default) -> OpenAI if configured, else Groq
+
+## Optional LLM (Gemini)
+
+```powershell
+$env:LLM_PROVIDER="gemini"
+$env:GEMINI_API_KEY="your_gemini_api_key_here"
+$env:GEMINI_MODEL="gemini-2.0-flash"
+```
+
+Optional split by task:
+
+```powershell
+$env:GEMINI_MODEL_CHAT="gemini-2.0-flash"
+$env:GEMINI_MODEL_ADVISOR="gemini-2.0-flash"
+$env:GEMINI_MODEL_STORYBOARD="gemini-2.0-flash"
+```
+
+## Tests
+
+From this directory:
+
+```powershell
+cd backend
+python -m pip install -r requirements.txt
+pytest
+```
+
+The test suite covers plan validation, evidence integrity, job‑match behavior, and advisor workflows.
 
 ## Data files used
 

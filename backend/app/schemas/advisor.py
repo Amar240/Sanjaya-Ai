@@ -12,6 +12,7 @@ class AdvisorRequest(BaseModel):
     tone: Literal["friendly", "concise"] = "friendly"
     plan_id: str | None = None
     plan: PlanResponse | None = None
+    course_id: str | None = None
 
     @model_validator(mode="after")
     def _validate_plan_reference(self) -> "AdvisorRequest":

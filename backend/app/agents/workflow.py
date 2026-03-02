@@ -21,7 +21,10 @@ from ..rag import MarketEvidenceRetriever
 from ..schemas.plan import CandidateRole, PlanError, PlanRequest, PlanResponse
 from ..validators.plan_verifier import check_evidence_integrity
 from .fingerprint import compute_plan_id
+from .gap_engine import build_gap_report
+from .plan_enrichment import enrich_plan_outputs
 from .planner import build_plan
+from .reality_attach import attach_role_reality
 from .repair import repair_once, retryable_errors
 
 try:
@@ -238,6 +241,21 @@ def _run_langgraph(
         if role_request_warning is not None:
             draft.validation_errors.append(role_request_warning)
         draft.validation_errors.extend(check_evidence_integrity(draft))
+        role_reality, reality_warnings = attach_role_reality(draft, store)
+        draft.role_reality = role_reality
+        draft.validation_errors.extend(reality_warnings)
+        draft.intake_snapshot = state["request"].student_profile.model_copy(deep=True)
+        draft.gap_report = build_gap_report(
+            draft,
+            store,
+            confidence_level=draft.intake_snapshot.confidence_level,
+            hours_per_week=draft.intake_snapshot.hours_per_week,
+        )
+        enrich_plan_outputs(
+            plan=draft,
+            request=state["request"],
+            store=store,
+        )
         vector_status = "enabled" if retriever.using_chroma else "fallback_lexical"
         trace.append(f"evidence: attached {len(evidence_panel)} evidence snippets via {vector_status}")
         trace.extend(_evidence_retrieval_trace_lines(retriever))
@@ -399,6 +417,21 @@ def _run_fallback(
     if role_request_warning is not None:
         state["draft_plan"].validation_errors.append(role_request_warning)
     state["draft_plan"].validation_errors.extend(check_evidence_integrity(state["draft_plan"]))
+    role_reality, reality_warnings = attach_role_reality(state["draft_plan"], store)
+    state["draft_plan"].role_reality = role_reality
+    state["draft_plan"].validation_errors.extend(reality_warnings)
+    state["draft_plan"].intake_snapshot = state["request"].student_profile.model_copy(deep=True)
+    state["draft_plan"].gap_report = build_gap_report(
+        state["draft_plan"],
+        store,
+        confidence_level=state["draft_plan"].intake_snapshot.confidence_level,
+        hours_per_week=state["draft_plan"].intake_snapshot.hours_per_week,
+    )
+    enrich_plan_outputs(
+        plan=state["draft_plan"],
+        request=state["request"],
+        store=store,
+    )
     vector_status = "enabled" if retriever.using_chroma else "fallback_lexical"
     state["agent_trace"].append(
         f"evidence: attached {len(evidence_panel)} evidence snippets via {vector_status}"
@@ -427,6 +460,7 @@ def _resolve_role_candidates(
     store: CatalogStore,
     retriever: MarketEvidenceRetriever,
 ) -> tuple[str, list[str], list[CandidateRole], PlanError | None]:
+    preferred_role_id = request.preferred_role_id
     top_k = _topk_roles_from_env()
     interest_terms = list(request.student_profile.interests)
     requested_role_text = (request.requested_role_text or "").strip()
@@ -456,7 +490,11 @@ def _resolve_role_candidates(
 
     candidate_roles = _build_candidate_roles(ranked, request, store, retriever, top_k=top_k)
     if not candidate_roles:
-        fallback_role = store.roles[0]
+        fallback_role = (
+            store.roles_by_id.get(preferred_role_id)
+            if preferred_role_id and preferred_role_id in store.roles_by_id
+            else store.roles[0]
+        )
         candidate_roles = [
             CandidateRole(
                 role_id=fallback_role.role_id,
@@ -465,6 +503,32 @@ def _resolve_role_candidates(
                 reasons=["Fallback candidate due to empty retrieval output."],
             )
         ]
+
+    # If the student explicitly selected a preferred role, honor it by
+    # making that role the first candidate when available.
+    if preferred_role_id:
+        # Try to move an existing candidate to the front.
+        idx = next(
+            (i for i, item in enumerate(candidate_roles) if item.role_id == preferred_role_id),
+            None,
+        )
+        if idx is not None:
+            if idx != 0:
+                candidate_roles.insert(0, candidate_roles.pop(idx))
+        else:
+            # If retrieval did not return the preferred role but it exists
+            # in the catalog, prepend it as a candidate.
+            role = store.roles_by_id.get(preferred_role_id)
+            if role is not None:
+                candidate_roles.insert(
+                    0,
+                    CandidateRole(
+                        role_id=role.role_id,
+                        role_title=role.title,
+                        score=0.0,
+                        reasons=["Explicitly selected by student as preferred_role_id."],
+                    ),
+                )
 
     selected_role_id = candidate_roles[0].role_id
     candidates = [item.role_id for item in candidate_roles]
@@ -711,7 +775,7 @@ def _audit_top1_value(diag: dict, key: str) -> str | None:
 
 def _log_plan_analytics(*, request: PlanRequest, response: PlanResponse) -> None:
     try:
-        log_plan_created(response)
+        log_plan_created(response, request)
         requested = (request.requested_role_text or "").strip()
         if requested:
             candidates = [

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from fastapi.testclient import TestClient
 
 from app import main as main_module
@@ -53,7 +55,7 @@ def test_events_logged_on_plan_and_advisor(monkeypatch, sample_store, tmp_path) 
     with connect() as conn:
         rows = conn.execute(
             """
-            SELECT event_type, question_hash, keyword_tags_json
+            SELECT event_type, question_hash, keyword_tags_json, notes_json
             FROM events
             ORDER BY id ASC
             """
@@ -66,3 +68,9 @@ def test_events_logged_on_plan_and_advisor(monkeypatch, sample_store, tmp_path) 
     advisor_event = next(row for row in rows if row["event_type"] == "advisor_question")
     assert advisor_event["question_hash"]
     assert advisor_event["keyword_tags_json"] in (None, "null")
+
+    plan_event = next(row for row in rows if row["event_type"] == "plan_created")
+    notes = json.loads(plan_event["notes_json"] or "{}")
+    assert notes["goal_type"] == "select_role"
+    assert notes["confidence_level"] == "medium"
+    assert notes["hours_per_week"] == 6

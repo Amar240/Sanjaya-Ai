@@ -1,5 +1,6 @@
 "use client";
 
+import { formatSkillId } from "@/lib/skillLabels";
 import type { PlanResponse } from "@/lib/types";
 
 type CareerPathMapProps = {
@@ -24,7 +25,7 @@ export default function CareerPathMap({
   );
 
   return (
-    <article className="subpanel career-map">
+    <article className="subpanel career-map" id="career-path">
       <h3>Visual Career Path</h3>
       <p className="muted">
         Clear top-to-bottom path from selected role to covered skills, then semester-by-semester courses.
@@ -34,7 +35,6 @@ export default function CareerPathMap({
         <div className="path-node role-node">
           <p className="eyebrow">Target Role</p>
           <strong>{plan.selected_role_title}</strong>
-          <p className="muted mono">{plan.selected_role_id}</p>
           {plan.candidate_roles?.length ? (
             <div className="alt-role-block">
               <p className="eyebrow">Top Alternatives</p>
@@ -43,8 +43,7 @@ export default function CareerPathMap({
                   alternatives.map((item) => (
                     <li key={`candidate-${item.role_id}`}>
                       <p>
-                        <strong>{item.role_title}</strong>{" "}
-                        <span className="muted mono">({item.role_id})</span>
+                        <strong>{item.role_title}</strong>
                       </p>
                       <p className="muted">Score: {item.score.toFixed(3)}</p>
                       <ul className="plain-list">
@@ -88,7 +87,7 @@ export default function CareerPathMap({
                     : "No mapped course yet"
                 }
               >
-                {skill.required_skill_id}
+                {formatSkillId(skill.required_skill_id)}
               </span>
             ))}
           </div>

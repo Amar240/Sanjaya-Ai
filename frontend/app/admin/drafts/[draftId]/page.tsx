@@ -15,6 +15,21 @@ type DraftRole = {
   created_by?: string;
   created_at?: string;
   role_origin?: string;
+  department_owner?: string;
+  country_scope?: string;
+  demo_tier?: "core" | "fusion" | "extended";
+  reality_complete?: boolean;
+  project_coverage_complete?: boolean;
+};
+
+type ReadinessRow = {
+  role_id: string;
+  department_owner: string;
+  demo_tier: string;
+  gate1_required_skills_evidence_ok: boolean;
+  gate2_role_reality_ok: boolean;
+  gate3_project_coverage_ok: boolean;
+  missing_project_skills: string[];
 };
 
 export default function DraftRolesPage({ params }: Params): JSX.Element {
@@ -25,12 +40,18 @@ export default function DraftRolesPage({ params }: Params): JSX.Element {
   const [title, setTitle] = useState<string>("");
   const [summary, setSummary] = useState<string>("");
   const [marketGrounding, setMarketGrounding] = useState<"direct" | "composite">("direct");
+  const [departmentOwner, setDepartmentOwner] = useState<string>("CIS");
+  const [demoTier, setDemoTier] = useState<"core" | "fusion" | "extended">("extended");
+  const [readinessRows, setReadinessRows] = useState<ReadinessRow[]>([]);
+  const [filterDept, setFilterDept] = useState<string>("");
 
   const canCreate = useMemo(() => roleId.trim() && title.trim(), [roleId, title]);
 
   async function loadRoles(): Promise<void> {
     setError("");
-    const res = await fetch(`/api/admin/drafts/${encodeURIComponent(params.draftId)}/roles`, {
+    const qs = new URLSearchParams();
+    if (filterDept.trim()) qs.set("department_owner", filterDept.trim().toUpperCase());
+    const res = await fetch(`/api/admin/drafts/${encodeURIComponent(params.draftId)}/roles?${qs.toString()}`, {
       method: "GET",
       cache: "no-store"
     });
@@ -44,13 +65,28 @@ export default function DraftRolesPage({ params }: Params): JSX.Element {
     }
     const data = payload as { items?: DraftRole[] };
     setItems(data.items ?? []);
+
+    const readinessRes = await fetch(
+      `/api/admin/drafts/${encodeURIComponent(params.draftId)}/roles/readiness?${qs.toString()}`,
+      { method: "GET", cache: "no-store" }
+    );
+    const readinessPayload = await readinessRes.json().catch(() => null);
+    if (!readinessRes.ok) {
+      throw new Error(
+        readinessPayload && typeof readinessPayload === "object" && "detail" in readinessPayload
+          ? String((readinessPayload as { detail: unknown }).detail)
+          : "Failed to load readiness status"
+      );
+    }
+    const readinessData = readinessPayload as { items?: ReadinessRow[] };
+    setReadinessRows(readinessData.items ?? []);
   }
 
   useEffect(() => {
     loadRoles().catch((err: unknown) => {
       setError(err instanceof Error ? err.message : "Failed to load draft");
     });
-  }, [params.draftId]);
+  }, [params.draftId, filterDept]);
 
   async function createRole(): Promise<void> {
     if (!canCreate) return;
@@ -66,7 +102,10 @@ export default function DraftRolesPage({ params }: Params): JSX.Element {
           summary: summary.trim(),
           market_grounding: marketGrounding,
           required_skills: [],
-          evidence_sources: []
+          evidence_sources: [],
+          department_owner: departmentOwner.trim().toUpperCase() || "EXTENDED",
+          country_scope: "USA",
+          demo_tier: demoTier
         })
       });
       const payload = await res.json().catch(() => null);
@@ -167,6 +206,20 @@ export default function DraftRolesPage({ params }: Params): JSX.Element {
             <option value="direct">direct</option>
             <option value="composite">composite</option>
           </select>
+          <input
+            type="text"
+            value={departmentOwner}
+            placeholder="Department owner (e.g. CIS)"
+            onChange={(event) => setDepartmentOwner(event.target.value)}
+          />
+          <select
+            value={demoTier}
+            onChange={(event) => setDemoTier(event.target.value as "core" | "fusion" | "extended")}
+          >
+            <option value="core">core</option>
+            <option value="fusion">fusion</option>
+            <option value="extended">extended</option>
+          </select>
         </div>
         <textarea
           value={summary}
@@ -184,11 +237,21 @@ export default function DraftRolesPage({ params }: Params): JSX.Element {
       </section>
       <section className="panel">
         <h3>Roles</h3>
+        <div className="field-grid">
+          <input
+            type="text"
+            value={filterDept}
+            placeholder="Filter by department owner"
+            onChange={(event) => setFilterDept(event.target.value)}
+          />
+        </div>
         <table className="admin-table">
           <thead>
             <tr>
               <th>Role ID</th>
               <th>Title</th>
+              <th>Dept</th>
+              <th>Tier</th>
               <th>Origin</th>
               <th>Created By</th>
               <th>Action</th>
@@ -199,6 +262,8 @@ export default function DraftRolesPage({ params }: Params): JSX.Element {
               <tr key={item.role_id}>
                 <td>{item.role_id}</td>
                 <td>{item.title}</td>
+                <td>{item.department_owner ?? "-"}</td>
+                <td>{item.demo_tier ?? "-"}</td>
                 <td>{item.role_origin ?? "-"}</td>
                 <td>{item.created_by ?? "-"}</td>
                 <td>
@@ -211,6 +276,33 @@ export default function DraftRolesPage({ params }: Params): JSX.Element {
                     Delete
                   </button>
                 </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </section>
+      <section className="panel">
+        <h3>Readiness Gates</h3>
+        <table className="admin-table">
+          <thead>
+            <tr>
+              <th>Role ID</th>
+              <th>Tier</th>
+              <th>Gate1</th>
+              <th>Gate2</th>
+              <th>Gate3</th>
+              <th>Missing Project Skills</th>
+            </tr>
+          </thead>
+          <tbody>
+            {readinessRows.map((row) => (
+              <tr key={`readiness-${row.role_id}`}>
+                <td>{row.role_id}</td>
+                <td>{row.demo_tier}</td>
+                <td>{row.gate1_required_skills_evidence_ok ? "OK" : "BLOCK"}</td>
+                <td>{row.gate2_role_reality_ok ? "OK" : "BLOCK"}</td>
+                <td>{row.gate3_project_coverage_ok ? "OK" : "BLOCK"}</td>
+                <td>{row.missing_project_skills.join(", ") || "-"}</td>
               </tr>
             ))}
           </tbody>

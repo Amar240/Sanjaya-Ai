@@ -1,14 +1,16 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { askAdvisor } from "@/lib/api";
+import { copy } from "@/lib/copy";
 import type { AdvisorCitation, AdvisorResponse, PlanResponse } from "@/lib/types";
 
 type AdvisorQAPanelProps = {
   plan: PlanResponse;
   queuedQuestion?: string | null;
   queuedQuestionNonce?: number;
+  focusNonce?: number;
 };
 
 function anchorId(prefix: string, raw: string): string {
@@ -39,12 +41,15 @@ export default function AdvisorQAPanel({
   plan,
   queuedQuestion,
   queuedQuestionNonce,
+  focusNonce,
 }: AdvisorQAPanelProps): JSX.Element {
-  const [question, setQuestion] = useState<string>("Why this role for me?");
+  const [question, setQuestion] = useState<string>(copy.advisor.chips[0]);
   const [tone, setTone] = useState<"friendly" | "concise">("friendly");
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string>("");
   const [result, setResult] = useState<AdvisorResponse | null>(null);
+  const [lastAskedQuestion, setLastAskedQuestion] = useState<string | null>(null);
+  const questionInputRef = useRef<HTMLInputElement | null>(null);
 
   async function handleAsk(explicitQuestion?: string): Promise<void> {
     const content = (explicitQuestion ?? question).trim();
@@ -53,6 +58,7 @@ export default function AdvisorQAPanel({
     }
     setLoading(true);
     setError("");
+    setLastAskedQuestion(content);
     try {
       const response = await askAdvisor({
         question: content,
@@ -61,7 +67,7 @@ export default function AdvisorQAPanel({
       });
       setResult(response);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Advisor request failed.");
+      setError(e instanceof Error ? e.message : copy.errors.advisorFailed);
     } finally {
       setLoading(false);
     }
@@ -76,19 +82,41 @@ export default function AdvisorQAPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [queuedQuestionNonce]);
 
+  useEffect(() => {
+    if (!focusNonce) {
+      return;
+    }
+    questionInputRef.current?.focus();
+  }, [focusNonce]);
+
   return (
-    <article className="subpanel advisor-panel">
-      <h3>Ask Advisor</h3>
-      <p className="muted">
-        Ask why a role/course was recommended, capability/difficulty questions, and get defended reasoning with citations.
-      </p>
+    <article className="subpanel advisor-panel" id="advisor-panel">
+      <h3>{copy.advisor.title}</h3>
+      <p className="muted">{copy.advisor.helper}</p>
+
+      <div className="chat-actions" style={{ marginBottom: "var(--space-2)" }}>
+        {copy.advisor.chips.map((chipText) => (
+          <button
+            key={chipText}
+            type="button"
+            className={`ui-chip ${lastAskedQuestion === chipText && result ? "ui-chip--selected" : ""}`}
+            onClick={() => { setQuestion(chipText); void handleAsk(chipText); }}
+            disabled={loading}
+            style={{ cursor: "pointer" }}
+            aria-pressed={lastAskedQuestion === chipText && !!result}
+          >
+            {chipText}
+          </button>
+        ))}
+      </div>
 
       <div className="advisor-inputs">
         <input
+          ref={questionInputRef}
           type="text"
           value={question}
           onChange={(event) => setQuestion(event.target.value)}
-          placeholder="Am I capable for this path? How difficult is this roadmap?"
+          placeholder={copy.advisor.placeholder}
           disabled={loading}
         />
         <select
@@ -105,7 +133,7 @@ export default function AdvisorQAPanel({
           onClick={() => void handleAsk()}
           disabled={loading || !question.trim()}
         >
-          {loading ? "Thinking..." : "Ask"}
+          {loading ? copy.advisor.askLoading : copy.advisor.askButton}
         </button>
       </div>
 
@@ -116,19 +144,22 @@ export default function AdvisorQAPanel({
           <p>
             <strong>Answer:</strong> {result.answer}
           </p>
-          <p className="muted">
-            Plan: <span className="mono">{result.plan_id}</span> |{" "}
-            Intent: {result.intent} | Confidence: {Math.round(result.confidence * 100)}% | LLM:{" "}
-            {result.llm_status}
-          </p>
-          {result.llm_status === "fallback" ? (
-            <p className="muted">
-              Fallback means deterministic advisor logic answered because the live LLM call was unavailable.
-            </p>
-          ) : null}
-          {result.llm_error ? (
-            <p className="muted">LLM detail: {result.llm_error}</p>
-          ) : null}
+          <details className="advisor-meta-details">
+            <summary>How we answered</summary>
+            <div style={{ marginTop: "var(--space-2)" }}>
+              <p className="muted">
+                Plan: <span className="mono">{result.plan_id}</span> · Intent: {result.intent} · Confidence: {Math.round(result.confidence * 100)}% · LLM: {result.llm_status}
+              </p>
+              {result.llm_status === "fallback" ? (
+                <p className="muted">
+                  Fallback means deterministic advisor logic answered because the live LLM call was unavailable.
+                </p>
+              ) : null}
+              {result.llm_error ? (
+                <p className="muted">LLM detail: {result.llm_error}</p>
+              ) : null}
+            </div>
+          </details>
 
           {result.reasoning_points.length ? (
             <>

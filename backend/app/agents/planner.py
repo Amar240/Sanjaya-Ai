@@ -70,6 +70,9 @@ def build_plan(request: PlanRequest, store: CatalogStore) -> PlanResponse:
         min_credits=request.student_profile.min_credits,
         target_credits=request.student_profile.target_credits,
         max_credits=request.student_profile.max_credits,
+        degree_total_credits=getattr(
+            request.student_profile, "degree_total_credits", None
+        ),
     )
 
     skill_coverage = _build_skill_coverage(
@@ -480,6 +483,7 @@ def _schedule_semesters(
     min_credits: int,
     target_credits: int,
     max_credits: int,
+    degree_total_credits: int | None = None,
 ) -> tuple[list[PlanSemester], set[str], set[str]]:
     remaining = set(c for c in expanded_targets if c in courses_by_id and c not in completed_courses)
     supplemental_remaining = set(
@@ -540,15 +544,21 @@ def _schedule_semesters(
                 c.course_id,
             )
         )
+        cumulative_before = sum(s.total_credits for s in semesters)
         selected: list[Course] = []
         credit_sum = 0.0
 
         for course in available:
             if len(selected) >= max_courses_soft:
                 break
-            if credit_sum + course.credits <= max_credits:
-                selected.append(course)
-                credit_sum += course.credits
+            if credit_sum + course.credits > max_credits:
+                continue
+            if degree_total_credits is not None and (
+                cumulative_before + credit_sum + course.credits > degree_total_credits
+            ):
+                continue
+            selected.append(course)
+            credit_sum += course.credits
             if credit_sum >= target_credits:
                 break
 
@@ -602,6 +612,10 @@ def _schedule_semesters(
                         break
                     if credit_sum + course.credits > max_credits:
                         continue
+                    if degree_total_credits is not None and (
+                        cumulative_before + credit_sum + course.credits > degree_total_credits
+                    ):
+                        continue
                     selected.append(course)
                     credit_sum += course.credits
                     if credit_sum >= min_credits and len(selected) >= min_courses_soft:
@@ -640,6 +654,10 @@ def _schedule_semesters(
             planned.add(cid)
             completed.add(cid)
         cycle_progress = True
+        if degree_total_credits is not None:
+            cumulative_now = sum(s.total_credits for s in semesters)
+            if cumulative_now >= degree_total_credits:
+                break
         if (term_offset + 1) % len(term_cycle) == 0:
             cycle_progress = False
 

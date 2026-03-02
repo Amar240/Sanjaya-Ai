@@ -71,6 +71,17 @@ class FusionRoleProfile(BaseModel):
     evidence_sources: list[str] = Field(default_factory=list)
 
 
+class FusionPack(BaseModel):
+    fusion_pack_id: str
+    title: str
+    domain_a: str
+    domain_b: str
+    target_roles: list[str] = Field(default_factory=list)
+    unlock_skills: list[str] = Field(default_factory=list)
+    starter_projects: list[str] = Field(default_factory=list)
+    evidence_sources: list[str] = Field(default_factory=list)
+
+
 class SourceReference(BaseModel):
     source_id: str
     provider: str
@@ -93,6 +104,11 @@ class RoleMarket(BaseModel):
     summary: str
     required_skills: list[RoleSkillRequirement]
     evidence_sources: list[str] = Field(default_factory=list)
+    department_owner: str = ""
+    country_scope: str = "USA"
+    demo_tier: Literal["core", "fusion", "extended"] = "extended"
+    reality_complete: bool = False
+    project_coverage_complete: bool = False
 
 
 class RoleSkillEvidence(BaseModel):

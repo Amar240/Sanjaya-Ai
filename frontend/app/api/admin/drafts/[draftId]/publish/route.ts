@@ -5,6 +5,7 @@ const BACKEND_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL ??
   "http://127.0.0.1:8000";
 const ADMIN_TOKEN = process.env.SANJAYA_ADMIN_TOKEN ?? "dev-admin-token";
+const ADMIN_USER = process.env.SANJAYA_ADMIN_USER ?? "advisor";
 
 type Params = { params: { draftId: string } };
 
@@ -14,7 +15,7 @@ export async function POST(_: Request, { params }: Params): Promise<NextResponse
       `${BACKEND_URL}/admin/drafts/${encodeURIComponent(params.draftId)}/publish`,
       {
         method: "POST",
-        headers: { "x-admin-token": ADMIN_TOKEN },
+        headers: { "x-admin-token": ADMIN_TOKEN, "x-admin-user": ADMIN_USER },
         cache: "no-store"
       }
     );
