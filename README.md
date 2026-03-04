@@ -1,119 +1,72 @@
-# Sanjaya AI - Explainable Career Roadmaps
+Sanjaya AI 2.0 — Verified Roadmaps from Courses → Skills → Real Jobs (USA)
 
-Explainable, deterministic course-to-career planner with evidence-backed recommendations.
+**Deterministic planner + verifier + evidence-grounded RAG** to generate **prerequisite-safe, credit-aware**, job-aligned semester roadmaps—built to prevent “market shock” for students and to support advisors with transparent governance.
 
-Repo: `https://github.com/Amar240/AiIgnite-Sanjaya-Ai.git`
+> **Design principle:** separate **truth** from **language**  
+> - **Truth/correctness** is decided by deterministic planning + deterministic verification (academic constraints).  
+> - **Grounding** comes from retrieval that attaches evidence to role/skill claims.  
+> - **LLMs are optional** and restricted to phrasing under strict schemas (they cannot change verified decisions).
 
-## Judge TL;DR
-- Problem solved: students pick courses without clear proof that those choices map to real jobs, required skills, and feasible timelines.
-- Why this is different: Sanjaya AI connects course plans to role reality, skill evidence, and job-posting checks in one governed workflow.
-- What is deterministic: role selection constraints, semester scheduling, prerequisite/credit validation, and readiness gates.
-- How to evaluate in 2-3 minutes: run the canonical demo below and verify the expected outputs checklist.
+---
 
-## Why This Should Score High
-### Innovation
-- We connect role -> skills -> courses -> semester plan -> job-posting gap analysis in one product loop, not as separate tools.
-- Proof: `Your path in 5 steps` combines market reality, skill gaps, storyboard, and job-match outcomes in one flow.
+## Why this exists (problem)
+Undergraduate students—especially the “middle layer”—often choose courses without a clear **Skills → Job → Money** picture. Many graduate with silent gaps (SQL, ML deployment, cloud basics, evaluation practices), and those gaps show up as **market shock** during recruiting.
 
-### Technical Rigor
-- Core planning and validation are deterministic, with typed error codes and reproducible outputs.
-- Proof: backend test suite validates planner, verifier, cache behavior, governance, and endpoint behavior.
+This is harder for interdisciplinary students. A “catalyst” subject (often computer science) can unlock fusion careers like **Computational Chemistry, Bioinformatics, Health AI**, but students need early visibility into pathways and readiness gaps.
 
-### Explainability and Safety
-- Recommendations include source-backed evidence and explicit validation warnings instead of opaque text output.
-- Proof: evidence panel, citation fields, and validation codes such as `PREREQ_ORDER` and `CREDIT_OVER_MAX`.
+Advisors also need support at scale: a governed add-on that keeps role-to-skill mappings maintainable and makes recommendations transparent, reviewable, and auditable.
 
-### Real-World Feasibility
-- Admin workflows support role-request intake, draft curation, readiness gates, and controlled publishing.
-- Proof: `/admin/role-requests`, `/admin/drafts/[draftId]`, and publish governance tests.
+---
 
-### Student and Advisor Impact
-- Students get actionable gap closure (courses + projects), while advisors get explainable Q&A and portfolio-level insights.
-- Proof: advisor flows with citations plus `/admin/insights` aggregate trends and risk signals.
+## What Sanjaya AI delivers
+1. **Verified roadmap (term-by-term)**  
+   Prerequisite-safe, credit-aware, term-offering aware semester plans.
 
-### Rubric Mapping (Criterion -> Evidence)
-| Criterion | Evidence in Project | Where to Verify |
-| --- | --- | --- |
-| Innovation | End-to-end roadmap from course intake to job-posting match | UI flow at `/` -> `Your path in 5 steps` |
-| Technical rigor | Deterministic planner/verifier and typed response schemas | `backend/tests/` and FastAPI responses |
-| Explainability and safety | Citation-linked evidence and structured validation warnings | Skills/Evidence panel and Validation tab |
-| Feasibility and operations | Admin curation + readiness gates before publish | `/admin/role-requests`, `/admin/drafts/[draftId]` |
-| Impact | Student-facing clarity plus advisor/admin monitoring | `/`, `/admin/insights`, advisor Q&A |
+2. **Skill coverage map**  
+   Courses → skills → role requirements, with missing skill clusters highlighted.
 
-## 90-Second Judge Demo (Deterministic Script)
-Use this exact seed so all 5 steps populate consistently.
+3. **Evidence-linked explanations**  
+   “Why this plan/course” and “why not alternatives,” backed by evidence entries.
 
-### Demo seed
-| Field | Value |
-| --- | --- |
-| Level | UG (Undergraduate) |
-| Mode | Fusion |
-| Fusion domain | `finance` |
-| Goal type | Pick a role |
-| Preferred role | Quant Risk Analyst or FinTech Engineer |
-| Current semester | 1 |
-| Start term | Fall |
-| Interests | operations research, analytics, optimization |
+4. **Advisor governance layer**  
+   Draft → review → publish workflow, readiness gates, and versioned mappings/audit logs.
 
-### Click path and expected outputs
-1. Open `http://127.0.0.1:3000/` and complete intake using the seed above.
-Expected: plan hero appears with selected role and summary bar.
-2. Open Step 1 `Target Reality`.
-Expected: role tasks and salary band with market grounding.
-3. Open Step 2 `Skill Gaps`.
-Expected: covered vs missing skills and recommended projects.
-4. Open Step 3 `Fusion Opportunities`.
-Expected: fusion pack summary with cross-domain readiness signal.
-5. Open Step 4 `Career Storyboard` and click generate.
-Expected: narrative sections with citations; if no LLM key, deterministic fallback still renders.
-6. Open Step 5 `Reality Check (Job Posting)`, click `Load Preset 1`, then `Extract & Match`.
-Expected: mapped vs unmapped terms, covered/missing skills, and project recommendations.
-7. In Advisor Q&A, ask `Why this role?`.
-Expected: constrained answer with reasoning and citations tied to plan context.
+---
 
-## Proof Block (Metrics + Reliability)
-As of March 2, 2026:
-
-| Check | Result | Command |
-| --- | --- | --- |
-| Backend tests | Pass (`73/73`) | `cd backend && .venv312\Scripts\python -m pytest` |
-| Frontend lint | Pass | `cd frontend && npm run lint` |
-| Frontend production build | Pass | `cd frontend && npm run build` |
-| LLM-off mode | Supported | planner/validation still run without API keys |
-
-Failure-safe behavior:
-- If LLM is unavailable, planning, validation, and roadmap generation still work.
-- Storyboard and advisor flows degrade gracefully with deterministic fallback behavior.
-- Core feasibility rules (prereqs, credits, degree totals) are never delegated to LLM output.
-
-## How It Works (Architecture in 60 Seconds)
-1. Intake captures level/mode/preferences and degree constraints.
-2. Role selector ranks curated market roles from interests and optional preferred role.
-3. Deterministic planner schedules semester-by-semester courses under credit/prereq constraints.
-4. Verifier emits structured warnings/errors (`PlanError` codes) for feasibility issues.
-5. Evidence layer links skills and claims to source-backed market/course artifacts.
-6. Optional LLM layer generates narrative text and advisor responses from structured context only.
-7. Job-match module extracts skills from posting text and maps to covered/missing skill IDs.
-
-LLM boundary:
-- Allowed: narrative rewrite, advisor phrasing, text extraction with fallback.
-- Not allowed: deciding course feasibility, prerequisites, or core validation outcomes.
-
-## Quick Start
-### Judge fastest path (Docker)
-From repo root:
-
-```bash
-docker compose up --build
+## Repository structure
+```txt
+SanjayaAi/
+  backend/
+    app/
+    tests/
+    docs/
+    .env.example
+    requirements.txt
+    Dockerfile
+  frontend/
+    app/
+    components/
+    lib/
+    .env.local.example
+    package.json
+    Dockerfile
+  data/
+    processed/
+    raw/
+    analytics/
+    ops/
+    chroma/
+    curation_drafts/
+  docs/
+  scripts/
+  docker-compose.yml
+  README.md
+  run_local.ps1
+  run_local.sh
 ```
 
-Open:
-- App: `http://localhost:3000`
-- Backend health: `http://localhost:8000/health`
-
-### Local run (Python + Node)
-Backend:
-
+## Quickstart (local, recommended)
+### 1) Backend (FastAPI)
 ```powershell
 cd backend
 python -m pip install -r requirements.txt
@@ -121,7 +74,14 @@ copy .env.example .env
 uvicorn app.main:app --reload --port 8000
 ```
 
-Frontend (new terminal):
+Open:
+
+- Health: http://127.0.0.1:8000/health
+- Swagger: http://127.0.0.1:8000/docs
+
+### 2) Frontend (Next.js)
+
+Open a new terminal:
 
 ```powershell
 cd frontend
@@ -131,60 +91,213 @@ npm run dev
 ```
 
 Open:
-- App: `http://127.0.0.1:3000/`
-- API docs: `http://127.0.0.1:8000/docs`
 
-## Evaluation Checklist for Judges (Pass/Fail)
-- [ ] Plan generates from intake and shows role-specific roadmap hero.
-- [ ] Validation tab shows structured feasibility codes/warnings (not free-text guesses).
-- [ ] Skills view shows covered vs missing skills with evidence/citations.
-- [ ] Reality Check maps job text to covered/missing skills and recommends projects.
-- [ ] Advisor answers stay grounded in plan context with citations.
-- [ ] Admin flow supports role requests, draft readiness gates, and controlled publish path.
+- UI: http://127.0.0.1:3000
 
-## Limitations and Responsible Use
-- No job guarantee is made; this is decision support for planning and advising.
-- Salary values are market estimates, not promises.
-- LLM is optional and bounded; deterministic logic remains the source of truth.
-- Results depend on current catalog/market data coverage and curation quality.
+Important: set `NEXT_PUBLIC_API_BASE_URL` in `frontend/.env.local` if your frontend expects an explicit backend base URL.
+Example:
 
-## Data Transparency (`data/processed/`)
-| File | Purpose |
-| --- | --- |
-| `courses.json` | Course catalog with credits, prerequisites, terms |
-| `course_skills*.json` | Course-to-skill mappings (curated + fallback) |
-| `roles_market*.json` | Roles + required skills + evidence source IDs |
-| `skills_market.json` | Canonical skill taxonomy |
-| `role_skill_evidence.json` + `market_sources.json` | Evidence snippets + source metadata |
-| `role_reality_usa.json` | Role tasks and salary bands (USA posture) |
-| `project_templates.json` | Project templates for missing-skill closure |
-
-## Admin Auth (Minimal Setup)
-Set the same token in both files:
-- `frontend/.env.local` -> `SANJAYA_ADMIN_TOKEN`
-- `backend/.env` -> `SANJAYA_ADMIN_TOKEN`
-
-Default token in Docker compose: `dev-admin-token`
-
-Admin routes:
-- `/admin/insights`
-- `/admin/role-requests`
-- `/admin/drafts/[draftId]`
-
-## Deep-Dive Links
-- Submission document: `docs/submission.md`
-- Demo script: `docs/demo-script.md`
-- Operations runbook: `docs/ops-runbook.md`
-- Integration options: `docs/integration-options.md`
-
-## Backend Tests
-```bash
-cd backend
-pytest
+```env
+NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8000
 ```
 
-## Troubleshooting
-- Ports in use (`8000`/`3000`): stop existing processes or change ports.
-- Frontend cannot reach backend: verify `NEXT_PUBLIC_API_BASE_URL` in `frontend/.env.local`, then restart frontend.
-- Admin `401/403`: ensure matching `SANJAYA_ADMIN_TOKEN` in backend and frontend env files.
-- Backend startup data error: ensure `data/processed/*.json` files exist; check `/health` and backend logs.
+## One-command Docker (optional)
+```bash
+docker compose up --build
+```
+
+## Environment variables (what matters)
+### Backend (`backend/.env`)
+```env
+LLM_PROVIDER=auto
+GROQ_API_KEY=
+GROQ_MODEL=llama-3.3-70b-versatile
+OPENAI_API_KEY=
+OPENAI_MODEL=gpt-4o-mini
+GEMINI_API_KEY=
+GEMINI_MODEL=gemini-2.0-flash
+
+SANJAYA_ENABLE_LLM_STORYBOARD=0
+SANJAYA_ENABLE_LLM_ADVISOR=0
+SANJAYA_ENABLE_LLM_JOB_EXTRACTOR=0
+```
+
+Recommended default for judging: keep all `SANJAYA_ENABLE_*` toggles at `0` to demonstrate deterministic behavior (no dependency on external LLMs). Turn them on only if you want to show narrative/storyboard enrichment.
+
+Common optional variables used in code:
+
+- `SANJAYA_BACKEND_URL`
+- `SANJAYA_ADMIN_TOKEN`, `SANJAYA_ADMIN_USER`
+- `SANJAYA_OPS_DB_PATH` (default: `data/ops/sanjaya_ops.db`)
+- `SANJAYA_CHROMA_DIR` (default: `data/chroma/`)
+- `SANJAYA_ANALYTICS_DIR` (default: `data/analytics/`)
+
+### Frontend (`frontend/.env.local`)
+```env
+NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8000
+```
+
+## API overview (backend)
+### Core
+
+- `GET /health`
+- `GET /roles`
+- `GET /catalog/course/{course_id}`
+- `POST /plan`
+- `POST /chat`
+- `POST /advisor/ask`
+- `POST /plan/storyboard`
+- `POST /job/match`
+
+### Admin (governance)
+
+- `GET /admin/insights/summary`
+- `GET /admin/role-requests`
+- `GET /admin/role-requests/{role_request_id}`
+- `POST /admin/role-requests/{role_request_id}/ignore`
+- `POST /admin/role-requests/{role_request_id}/map`
+- `POST /admin/role-requests/{role_request_id}/create-role`
+- `POST /admin/drafts`
+- `GET /admin/drafts/{draft_id}/roles`
+- `GET /admin/drafts/{draft_id}/roles/readiness`
+- `POST /admin/drafts/{draft_id}/roles`
+- `PUT /admin/drafts/{draft_id}/roles/{role_id}`
+- `DELETE /admin/drafts/{draft_id}/roles/{role_id}`
+- `POST /admin/drafts/{draft_id}/publish`
+
+### Integration (MyUD posture)
+
+- `POST /integration/myud/launch`
+- `GET /integration/myud/plan/{plan_id}/summary`
+
+## Reproducible judge demo (90 seconds)
+
+This is the fastest way to validate the system end-to-end.
+
+### Step A — Confirm backend + data are loaded
+
+Open:
+
+`GET http://127.0.0.1:8000/health`
+
+✅ Expect a JSON response (ideally including dataset/version info).  
+(Suggested improvement: include counts for courses/roles/skills and the data_version hash.)
+
+### Step B — Generate a plan (`POST /plan`)
+
+Sample request:
+
+```json
+{
+  "student_profile": {
+    "level": "UG",
+    "mode": "CORE",
+    "goal_type": "select_role",
+    "confidence_level": "medium",
+    "hours_per_week": 6,
+    "current_semester": 1,
+    "start_term": "Fall",
+    "include_optional_terms": false,
+    "completed_courses": [],
+    "min_credits": 12,
+    "target_credits": 15,
+    "max_credits": 17,
+    "interests": ["ai", "data"]
+  },
+  "preferred_role_id": "ROLE_AI_ENGINEER"
+}
+```
+
+Response shape (high level):
+
+```json
+{
+  "plan_id": "hex-id",
+  "data_version": "hash",
+  "selected_role_title": "AI Engineer",
+  "skill_coverage": [{"required_skill_id":"SK_PYTHON","covered":true,"matched_courses":["CISC-108"]}],
+  "semesters": [{"term":"Fall","courses":["CISC-108"],"total_credits":3,"warnings":[]}],
+  "validation_errors": [],
+  "evidence_panel": []
+}
+```
+
+### Step C — Prove verification works (break something on purpose)
+
+Try a profile or constraint that should cause an invalid plan (e.g., unrealistic credit bounds or missing prereqs).  
+✅ The correct behavior is: structured validation errors (not a hallucinated explanation).
+
+### Step D — Ask the advisor endpoint (grounded explanation)
+
+Call `POST /advisor/ask` and confirm:
+
+- it references plan context
+- it produces evidence/citations when available
+- it does not override verifier constraints
+
+## Data (where “truth” lives)
+
+All primary datasets live under `data/processed/` (JSON/CSV), with `data/raw/` reserved for scraped catalogs.
+
+Key files:
+
+- `courses.json` — normalized course catalog
+- `roles_market.json` — market-grounded roles
+- `roles_market_calibrated.json` — calibrated role set (auto-used if present)
+- `skills_market.json` — skill taxonomy
+- `course_skills.json` — course-skill mappings
+- `course_skills_curated.json` — curated overrides
+- `role_skill_evidence.json` — evidence links for role-skill claims
+- `market_sources.json` — metadata for evidence sources
+- `role_reality_usa.json` — tasks + salary bands
+- `project_templates.json` — projects for closing missing skill clusters
+- `fusion_roles.json`, `fusion_packs_usa.json` — interdisciplinary fusion mode
+
+Other stores:
+
+- `data/analytics/events.jsonl` — analytics/event logs
+- `data/ops/sanjaya_ops.db` — ops/admin sqlite database
+- `data/chroma/` — vector index (e.g., `chroma.sqlite3` + embeddings files)
+
+## What makes this trustworthy (not “just a chatbot”)
+
+Most systems can produce plausible advice. Sanjaya AI is designed to be safe, auditable, and maintainable:
+
+- Deterministic planner + verifier enforce academic constraints explicitly.
+- Structured errors explain why a plan fails and how to fix it.
+- Evidence panel ties role/skill claims to sources for transparency.
+- Advisor governance ensures role/skill mappings can be reviewed and updated over time.
+
+## Running tests (recommended)
+
+Backend includes a test suite in `backend/tests/`.
+Run:
+
+```powershell
+cd backend
+pytest -q
+```
+
+(If tests require environment variables or seeded data, document it in `backend/docs/`.)
+
+## Admin governance flow (high level)
+
+- Role requests appear in `/admin/role-requests`
+- Advisor/admin maps or creates roles
+- Work happens in drafts (`/admin/drafts`)
+- Readiness is checked (`/admin/drafts/{draft_id}/roles/readiness`)
+- Publish promotes drafts into calibrated market mappings
+
+This is the mechanism that keeps the system accurate over time.
+
+## Screenshots (recommended)
+
+Add two images under `docs/images/` and link them here:
+
+- Roadmap: “Your path in 5 steps” after plan generation
+- Skill gaps + evidence panel visible (citations)
+
+Example:
+
+![Roadmap](docs/images/roadmap.png)
+![Skill Gaps + Evidence](docs/images/skill_gaps_evidence.png)
